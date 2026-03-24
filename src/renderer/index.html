@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline';" />
+  <title>BZH Tracker</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- Barre de titre custom (frameless) -->
+  <div class="titlebar">
+    <div class="titlebar-logo">
+      <span class="logo-text">BZH<span class="logo-accent">TRACKER</span></span>
+    </div>
+    <div class="titlebar-controls">
+      <button class="tb-btn" id="btn-minimize" title="Réduire">&#x2013;</button>
+      <button class="tb-btn tb-btn--close" id="btn-close" title="Fermer">&#x2715;</button>
+    </div>
+  </div>
+
+  <!-- ── VUE LOGIN ─────────────────────────────────────────────────────────── -->
+  <div id="view-login" class="view active">
+    <div class="login-container">
+      <div class="login-logo">
+        <div class="login-logo-ring"></div>
+        <span>✈</span>
+      </div>
+      <h2 class="login-title">BreizhAir</h2>
+      <p class="login-sub">Connectez-vous avec votre compte</p>
+
+      <form id="form-login">
+        <div class="field">
+          <label for="input-email">Email</label>
+          <input type="email" id="input-email" placeholder="pilote@breizhair.fr" autocomplete="email" />
+        </div>
+        <div class="field">
+          <label for="input-password">Mot de passe</label>
+          <input type="password" id="input-password" placeholder="••••••••" autocomplete="current-password" />
+        </div>
+        <div id="login-error" class="error-msg hidden"></div>
+        <button type="submit" id="btn-login" class="btn btn--primary">
+          <span id="btn-login-text">Se connecter</span>
+          <span id="btn-login-spinner" class="spinner hidden"></span>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── VUE PRINCIPALE ────────────────────────────────────────────────────── -->
+  <div id="view-main" class="view">
+
+    <!-- En-tête pilote -->
+    <div class="pilot-header">
+      <div class="pilot-info">
+        <span class="pilot-icon">👤</span>
+        <div>
+          <div class="pilot-name" id="pilot-name">—</div>
+          <div class="pilot-rank" id="pilot-rank">BreizhAir</div>
+        </div>
+      </div>
+      <button class="btn btn--ghost btn--sm" id="btn-logout">Déco.</button>
+    </div>
+
+    <!-- ── BLOC 1 : Statut simulateur ──────────────────────────────────────── -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">SIMULATEUR</span>
+        <span class="badge" id="sim-badge">DÉCONNECTÉ</span>
+      </div>
+      <div class="sim-selector">
+        <select id="sim-select" class="select">
+          <option value="msfs">MSFS 2020 / 2024</option>
+          <option value="xplane">X-Plane 11 / 12</option>
+          <option value="p3d">Prepar3D / FSX</option>
+        </select>
+        <button class="btn btn--primary btn--sm" id="btn-connect-sim">Connecter</button>
+      </div>
+      <div class="sim-status-bar">
+        <div class="status-dot" id="sim-dot"></div>
+        <span id="sim-status-text">En attente de connexion...</span>
+      </div>
+    </div>
+
+    <!-- ── BLOC 2 : Données vol en cours ──────────────────────────────────── -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">VOL EN COURS</span>
+        <span class="flight-timer" id="flight-timer">--:--</span>
+      </div>
+      <div class="instruments-grid">
+        <div class="instrument">
+          <div class="instrument-label">ALT</div>
+          <div class="instrument-value" id="data-alt">—</div>
+          <div class="instrument-unit">ft</div>
+        </div>
+        <div class="instrument">
+          <div class="instrument-label">IAS</div>
+          <div class="instrument-value" id="data-ias">—</div>
+          <div class="instrument-unit">kts</div>
+        </div>
+        <div class="instrument">
+          <div class="instrument-label">CAP</div>
+          <div class="instrument-value" id="data-hdg">—</div>
+          <div class="instrument-unit">°</div>
+        </div>
+        <div class="instrument">
+          <div class="instrument-label">V/S</div>
+          <div class="instrument-value" id="data-vs">—</div>
+          <div class="instrument-unit">fpm</div>
+        </div>
+        <div class="instrument">
+          <div class="instrument-label">FUEL</div>
+          <div class="instrument-value" id="data-fuel">—</div>
+          <div class="instrument-unit">gal</div>
+        </div>
+        <div class="instrument">
+          <div class="instrument-label">GS</div>
+          <div class="instrument-value" id="data-gs">—</div>
+          <div class="instrument-unit">kts</div>
+        </div>
+      </div>
+      <div class="phase-indicator">
+        <span class="phase-label">PHASE :</span>
+        <span id="flight-phase" class="phase-value">Sol</span>
+      </div>
+    </div>
+
+    <!-- ── BLOC 3 : Statut API ────────────────────────────────────────────── -->
+    <div class="card card--compact">
+      <div class="card-header">
+        <span class="card-title">API BREIZHAIR</span>
+        <div class="api-indicators">
+          <div class="api-dot" id="api-dot"></div>
+          <span id="api-status-text" class="api-text">—</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── BLOC 4 : PIREP (affiché après atterrissage) ────────────────────── -->
+    <div class="card card--pirep hidden" id="card-pirep">
+      <div class="card-header">
+        <span class="card-title">PIREP</span>
+        <span class="badge badge--success">Vol terminé !</span>
+      </div>
+      <form id="form-pirep">
+        <div class="pirep-row">
+          <div class="field field--half">
+            <label>Départ (ICAO)</label>
+            <input type="text" id="pirep-dep" maxlength="4" placeholder="LFRN" />
+          </div>
+          <div class="field field--half">
+            <label>Arrivée (ICAO)</label>
+            <input type="text" id="pirep-arr" maxlength="4" placeholder="LFPO" />
+          </div>
+        </div>
+        <div class="field">
+          <label>Aéronef</label>
+          <input type="text" id="pirep-aircraft" placeholder="A320-214" />
+        </div>
+        <div class="pirep-row">
+          <div class="field field--half">
+            <label>Durée (min)</label>
+            <input type="number" id="pirep-duration" min="1" />
+          </div>
+          <div class="field field--half">
+            <label>Carburant (gal)</label>
+            <input type="number" id="pirep-fuel" min="0" />
+          </div>
+        </div>
+        <div class="field">
+          <label>Remarques</label>
+          <textarea id="pirep-remarks" rows="2" placeholder="Vol nominal..."></textarea>
+        </div>
+        <div class="field">
+          <label>Note de vol</label>
+          <div class="rating" id="pirep-rating" data-value="5">
+            <span data-v="1">★</span><span data-v="2">★</span><span data-v="3">★</span>
+            <span data-v="4">★</span><span data-v="5">★</span>
+          </div>
+        </div>
+        <div id="pirep-error" class="error-msg hidden"></div>
+        <button type="submit" class="btn btn--primary" id="btn-pirep">
+          <span id="btn-pirep-text">Envoyer le PIREP</span>
+          <span id="btn-pirep-spinner" class="spinner hidden"></span>
+        </button>
+      </form>
+    </div>
+
+  </div><!-- /view-main -->
+
+  <script src="app.js"></script>
+</body>
+</html>

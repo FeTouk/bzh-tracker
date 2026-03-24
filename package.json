@@ -1,0 +1,38 @@
+{
+  "name": "bzh-tracker",
+  "version": "1.0.0",
+  "description": "BreizhAir Flight Tracker — Client ACARS maison",
+  "main": "src/main/index.js",
+  "author": "BreizhAir",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5",
+    "electron-store": "^8.2.0",
+    "node-simconnect": "^4.1.0-beta.2",
+    "socket.io-client": "^4.7.5"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.3",
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "fr.breizhair.tracker",
+    "productName": "BZH Tracker",
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*"
+    ]
+  }
+}
