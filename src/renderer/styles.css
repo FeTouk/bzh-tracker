@@ -18,6 +18,20 @@
   --radius:      8px;
 }
 
+[data-theme="light"] {
+  --bg:          #f0f4f8;
+  --bg-card:     #ffffff;
+  --bg-input:    #e8edf2;
+  --border:      #d0d7de;
+  --accent:      #1e8bc3;
+  --accent-glow: rgba(30, 139, 195, 0.15);
+  --success:     #1a7f37;
+  --warning:     #9a6700;
+  --danger:      #cf222e;
+  --text:        #1f2328;
+  --text-muted:  #636c76;
+}
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body {
@@ -37,7 +51,7 @@ html, body {
   justify-content: space-between;
   height: 36px;
   padding: 0 12px;
-  background: #0a0e14;
+  background: var(--bg-card);
   border-bottom: 1px solid var(--border);
   -webkit-app-region: drag;
   flex-shrink: 0;
@@ -61,13 +75,99 @@ html, body {
   display: none;
   flex-direction: column;
   height: calc(100vh - 36px);
-  overflow-y: auto;
-  padding: 16px;
+  overflow: hidden;
+}
+.view.active { display: flex; }
+
+/* ── Layout pages ────────────────────────────────────────────────────────── */
+#view-main {
+  display: none;
+  flex-direction: column;
+}
+#view-main.active { display: flex; }
+
+.pilot-header {
+  flex-shrink: 0;
+  margin: 8px 12px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.pages-wrapper {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.page {
+  display: none;
+  flex-direction: column;
   gap: 10px;
+  padding: 10px 12px;
+  height: 100%;
+  overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 }
-.view.active { display: flex; }
+.page.active { display: flex; }
+
+/* ── Navigation basse ────────────────────────────────────────────────────── */
+.bottom-nav {
+  flex-shrink: 0;
+  display: flex;
+  border-top: 1px solid var(--border);
+  background: var(--bg-card);
+  height: 56px;
+}
+.nav-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  position: relative;
+  transition: color 0.15s;
+}
+.nav-btn.active { color: var(--accent); }
+.nav-btn.active::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 20%; right: 20%;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 0 0 3px 3px;
+}
+.nav-icon { font-size: 18px; }
+.nav-label { font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+.nav-badge {
+  position: absolute;
+  top: 6px; right: calc(50% - 18px);
+  width: 8px; height: 8px;
+  background: var(--danger);
+  border-radius: 50%;
+  border: 2px solid var(--bg-card);
+}
+
+/* ── PIREP waiting ───────────────────────────────────────────────────────── */
+.pirep-waiting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 24px 0;
+  color: var(--text-muted);
+}
+.pirep-waiting-icon { font-size: 32px; opacity: 0.3; }
 
 /* ── Login ───────────────────────────────────────────────────────────────── */
 .login-container {
@@ -98,6 +198,9 @@ html, body {
 }
 .login-title { font-size: 22px; font-weight: 700; color: var(--text); }
 .login-sub { font-size: 12px; color: var(--text-muted); }
+.field-remember { display: flex; align-items: center; margin: 2px 0 6px; }
+.remember-label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); cursor: pointer; user-select: none; }
+.remember-label input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer; }
 
 /* ── Cartes ──────────────────────────────────────────────────────────────── */
 .card {
@@ -124,18 +227,29 @@ html, body {
   color: var(--text-muted);
 }
 
+/* ── Pré-vol ─────────────────────────────────────────────────────────────── */
+.preflight-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.field--full { grid-column: 1 / -1; }
+.input--icao { text-transform: uppercase; letter-spacing: 2px; font-weight: 600; }
+.optional { color: var(--text-muted); font-weight: 400; font-size: 10px; }
+.pf-mode-toggle { display: flex; gap: 2px; background: var(--bg-input); border-radius: 6px; padding: 2px; }
+.pf-mode-btn { border: none; background: transparent; color: var(--text-muted); font-size: 11px; padding: 3px 10px; border-radius: 4px; cursor: pointer; transition: all 0.15s; }
+.pf-mode-btn.active { background: var(--accent); color: #fff; }
+.pf-info-block { background: var(--bg-input); border-radius: 6px; padding: 8px 10px; }
+.pf-info-label { display: block; font-size: 10px; color: var(--text-muted); margin-bottom: 2px; }
+.pf-info-value { font-size: 14px; font-weight: 700; color: var(--accent); letter-spacing: 1px; }
+.pf-route-string { background: var(--bg-input); border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+input[readonly] { opacity: 0.6; cursor: default; }
+input[readonly]:focus { border-color: var(--border); box-shadow: none; }
+.pf-route-string code { font-family: var(--font-mono); font-size: 11px; color: var(--text); line-height: 1.5; word-break: break-all; }
+.pf-actions { display: flex; gap: 8px; }
+.pf-actions .btn { flex: 1; }
+.pf-booking-ok { font-size: 12px; color: var(--success); text-align: center; padding: 6px; }
+.pf-booking-err { font-size: 12px; color: var(--danger); text-align: center; padding: 6px; }
+
 /* ── Pilot header ────────────────────────────────────────────────────────── */
-.pilot-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
 .pilot-info { display: flex; align-items: center; gap: 10px; }
-.pilot-icon { font-size: 20px; }
+.pilot-avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; border: 2px solid var(--accent); }
 .pilot-name { font-weight: 600; font-size: 14px; }
 .pilot-rank { font-size: 11px; color: var(--accent); }
 
@@ -258,6 +372,11 @@ textarea { resize: none; }
 }
 .btn--primary:hover { opacity: 0.85; }
 .btn--primary:active { opacity: 0.7; }
+.btn--secondary {
+  background: transparent; color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+.btn--secondary:hover { color: var(--text); border-color: var(--accent); }
 .btn--ghost {
   background: transparent; color: var(--text-muted);
   border: 1px solid var(--border);
@@ -266,6 +385,21 @@ textarea { resize: none; }
 .btn--ghost:hover { color: var(--text); border-color: var(--text-muted); }
 .btn--sm { padding: 6px 12px; font-size: 12px; width: auto; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.login-divider {
+  display: flex; align-items: center; gap: 8px;
+  margin: 4px 0; color: var(--text-muted); font-size: 12px;
+}
+.login-divider::before, .login-divider::after {
+  content: ''; flex: 1; height: 1px; background: var(--border);
+}
+
+.web-auth-waiting {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--text-muted);
+  padding: 8px 0;
+}
+.web-auth-waiting .spinner { width: 14px; height: 14px; flex-shrink: 0; }
 
 /* ── Spinner ─────────────────────────────────────────────────────────────── */
 .spinner {

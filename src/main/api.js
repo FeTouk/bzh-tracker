@@ -1,4 +1,5 @@
 const axios = require('axios')
+const crypto = require('crypto')
 const { io } = require('socket.io-client')
 
 // À configurer selon l'URL de breizhairV2
@@ -40,11 +41,6 @@ class ApiClient {
 
   setToken (token) {
     this.token = token
-    if (token) {
-      this._connectWebSocket()
-    } else {
-      this._disconnectWebSocket()
-    }
   }
 
   // ─── Auth ─────────────────────────────────────────────────────────────────
@@ -52,9 +48,24 @@ class ApiClient {
     const res = await this.http.post('/tracker/login', { email, password })
     const { token, user } = res.data
 
+    const hash = crypto.createHash('md5').update(email.trim().toLowerCase()).digest('hex')
+    user.avatar = `https://www.gravatar.com/avatar/${hash}?s=72&d=mp`
+
     this.setToken(token)
     this._sendApiStatus('ok', 'Connecté')
     return { token, user }
+  }
+
+  async exchangeToken (token) {
+    const res = await this.http.post('/tracker/auth/exchange', { token })
+    const { token: sanctumToken, user } = res.data
+
+    const hash = crypto.createHash('md5').update((user.email || '').trim().toLowerCase()).digest('hex')
+    user.avatar = `https://www.gravatar.com/avatar/${hash}?s=72&d=mp`
+
+    this.setToken(sanctumToken)
+    this._sendApiStatus('ok', 'Connecté via le site')
+    return { token: sanctumToken, user }
   }
 
   async logout () {
@@ -65,13 +76,33 @@ class ApiClient {
     this.currentFlightId = null
   }
 
+  async getPreflight () {
+    const res = await this.http.get('/tracker/preflight')
+    return res.data
+  }
+
+  async createBooking (routeId) {
+    const res = await this.http.post('/tracker/booking', { route_id: routeId })
+    return res.data
+  }
+
+  async getNearestAirport (lat, lng) {
+    try {
+      const res = await this.http.get('/tracker/airport/nearest', { params: { lat, lng } })
+      return res.data.icao || null
+    } catch (_) {
+      return null
+    }
+  }
+
   // ─── Vol ──────────────────────────────────────────────────────────────────
   async startFlight (data) {
     try {
       const res = await this.http.post('/tracker/session/start', {
-        dep_lat:    data.lat,
-        dep_lng:    data.lng,
-        started_at: new Date().toISOString()
+        orig_icao:     data.origIcao     || 'ZZZZ',
+        dest_icao:     data.destIcao     || 'ZZZZ',
+        aircraft:      data.aircraft     || 'Unknown',
+        flight_number: data.flightNumber || null
       })
       this.currentFlightId = res.data.flight_hash
       this._sendApiStatus('ok', `Vol ${this.currentFlightId} démarré`)
@@ -85,14 +116,14 @@ class ApiClient {
     if (!this.currentFlightId) return
     try {
       await this.http.post('/tracker/posrep', {
-        flight_hash: this.currentFlightId,
-        lat: data.latitude,
-        lng: data.longitude,
-        alt: data.altitude,
-        ias: data.ias,
-        hdg: data.heading,
-        vs:  data.vs,
-        ts:  data.timestamp
+        flight_hash:  this.currentFlightId,
+        latitude:     data.latitude,
+        longitude:    data.longitude,
+        altitude_msl: data.altitude,
+        gs_kts:       data.gs,
+        heading_true: data.heading,
+        on_ground:    data.onGround,
+        epoch_time:   Math.floor(data.timestamp / 1000)
       })
       this._sendApiStatus('ok')
     } catch (err) {
@@ -100,36 +131,26 @@ class ApiClient {
     }
   }
 
-  async endFlight (data) {
-    if (!this.currentFlightId) return
-    try {
-      await this.http.post('/tracker/session/end', {
-        flight_hash:   this.currentFlightId,
-        arr_lat:       data.lat,
-        arr_lng:       data.lng,
-        block_minutes: data.duration,
-        ended_at:      new Date().toISOString()
-      })
-      this._sendApiStatus('ok', 'Vol terminé')
-    } catch (err) {
-      console.error('[API] endFlight error:', err.message)
+  endFlight (data) {
+    // Stocke les données techniques pour submitPirep
+    this.pendingFlightData = {
+      flight_hash:   this.currentFlightId,
+      block_minutes: data.duration,
+      distance:      data.distance   || 0,
+      fuel_used:     data.fuelUsed   ?? null,
+      landing_fpm:   data.landingFpm ?? null
     }
+    this._sendApiStatus('ok', 'Atterrissage détecté')
   }
 
   async submitPirep (pirepData) {
+    if (!this.pendingFlightData) throw new Error('Aucun vol en attente')
     const res = await this.http.post('/tracker/session/end', {
-      flight_hash:   this.currentFlightId,
-      dep_icao:      pirepData.depIcao,
-      arr_icao:      pirepData.arrIcao,
-      aircraft:      pirepData.aircraft,
-      block_minutes: pirepData.flightTime,
-      fuel_used:     pirepData.fuelUsed,
-      pax:           pirepData.pax,
-      cargo:         pirepData.cargo,
-      remarks:       pirepData.remarks,
-      rating:        pirepData.rating
+      ...this.pendingFlightData,
+      comments: pirepData.remarks || null
     })
     this.currentFlightId = null
+    this.pendingFlightData = null
     return res.data
   }
 

@@ -10,23 +10,73 @@ const state = {
   timerInterval: null,
   pirepRating: 5,
   pirepDuration: 0,
-  pirepFuelStart: null
+  pirepFuelStart: null,
+  detectedDepIcao: null
 }
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────
 const $ = (id) => document.getElementById(id)
 const views = { login: $('view-login'), main: $('view-main') }
 
-// ─── Navigation ───────────────────────────────────────────────────────────
+// ─── Navigation vues ──────────────────────────────────────────────────────
 function showView (name) {
   Object.entries(views).forEach(([k, el]) => {
     el.classList.toggle('active', k === name)
   })
 }
 
+// ─── Navigation pages ─────────────────────────────────────────────────────
+function showPage (pageId) {
+  document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === pageId))
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.page === pageId))
+}
+
+document.querySelectorAll('.nav-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    showPage(btn.dataset.page)
+    if (btn.dataset.page === 'page-preflight' && state.simConnected) loadPreflight()
+  })
+})
+
 // ─── Titlebar (frameless) ─────────────────────────────────────────────────
 $('btn-minimize').onclick = () => window.bzh.minimize()
 $('btn-close').onclick    = () => window.bzh.close()
+
+// ─── Thème jour/nuit ──────────────────────────────────────────────────────
+function applyTheme (theme) {
+  document.documentElement.setAttribute('data-theme', theme)
+  $('btn-theme').textContent = theme === 'light' ? '🌙' : '☀'
+}
+
+window.bzh.getTheme().then(applyTheme)
+
+$('btn-theme').onclick = () => {
+  const next = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light'
+  applyTheme(next)
+  window.bzh.setTheme(next)
+}
+
+// ─── Pré-remplir si credentials sauvegardés ───────────────────────────────
+window.bzh.getSaved().then((saved) => {
+  if (saved) {
+    $('input-email').value = saved.email
+    $('chk-remember').checked = true
+  }
+})
+
+// ─── Connexion via site web ───────────────────────────────────────────────
+$('btn-web-auth').addEventListener('click', () => {
+  window.bzh.openWebAuth()
+  $('web-auth-waiting').classList.remove('hidden')
+  $('btn-web-auth').disabled = true
+})
+
+window.bzh.on('auth:web-error', ({ error }) => {
+  $('web-auth-waiting').classList.add('hidden')
+  $('btn-web-auth').disabled = false
+  $('login-error').textContent = error || 'Échec de la connexion via le site'
+  $('login-error').classList.remove('hidden')
+})
 
 // ─── Auth ─────────────────────────────────────────────────────────────────
 $('form-login').addEventListener('submit', async (e) => {
@@ -39,7 +89,8 @@ $('form-login').addEventListener('submit', async (e) => {
   setLoginLoading(true)
   $('login-error').classList.add('hidden')
 
-  const res = await window.bzh.login(email, password)
+  const remember = $('chk-remember').checked
+  const res = await window.bzh.login(email, password, remember)
 
   if (res.success) {
     setUserInfo(res.user)
@@ -64,18 +115,148 @@ function setLoginLoading (loading) {
 }
 
 function setUserInfo (user) {
+  window._bzhUser = user
   $('pilot-name').textContent = user.name || user.email
-  $('pilot-rank').textContent = user.rank || 'Pilote BreizhAir'
+  $('pilot-rank').textContent = user.callsign || 'Pilote BreizhAir'
+  if (user.avatar) $('pilot-avatar').src = user.avatar
 }
 
-// Restauration auto token
-window.bzh.on('auth:restored', async () => {
-  const user = await window.bzh.getUser()
+// Restauration auto token (et retour deep link web auth)
+window.bzh.on('auth:restored', async ({ user }) => {
+  $('web-auth-waiting').classList.add('hidden')
+  $('btn-web-auth').disabled = false
   if (user) {
     setUserInfo(user)
     showView('main')
+    const simType = await window.bzh.getSimType()
+    if (simType) $('sim-select').value = simType
   }
 })
+
+// ─── Pré-vol ──────────────────────────────────────────────────────────────
+let preflightRoutes = []
+let preflightMode = 'ligne'
+
+function loadPreflight () {
+  window.bzh.getPreflight().then((data) => {
+    if (!data) return
+
+    $('pf-orig-display').value = data.current_airport || ''
+    $('pf-orig-libre').value   = data.current_airport || ''
+    preflightRoutes = data.routes || []
+
+    const sel = $('pf-route-select')
+    sel.innerHTML = preflightRoutes.length
+      ? '<option value="">— Choisir une ligne —</option>' +
+        preflightRoutes.map(r =>
+          `<option value="${r.id}">${r.departure_icao} → ${r.arrival_icao} · ${r.aircraft_type} [${r.line_type}]</option>`
+        ).join('')
+      : '<option value="">Aucune ligne depuis cet aéroport</option>'
+
+    // Pré-sélectionner la réservation active si elle existe
+    if (data.active_booking) {
+      const b = data.active_booking
+      const match = preflightRoutes.find(r =>
+        r.arrival_icao === b.dest_icao && r.aircraft_type === b.aircraft
+      )
+      if (match) sel.value = match.id
+      $('pf-flight-number').value = b.flight_number || ''
+      updateRouteDetails(match || null)
+    }
+  })
+}
+
+$('pf-route-select').addEventListener('change', () => {
+  const route = preflightRoutes.find(r => r.id == $('pf-route-select').value)
+  updateRouteDetails(route || null)
+})
+
+function updateRouteDetails (route) {
+  $('pf-booking-status').className = 'hidden'
+  $('pf-booking-status').textContent = ''
+
+  if (route) {
+    $('pf-dest-display').textContent     = route.arrival_icao
+    $('pf-aircraft-display').textContent = route.aircraft_type
+    $('pf-route-details').style.display  = 'grid'
+
+    if (route.ifps_route) {
+      $('pf-ifps-text').textContent = route.ifps_route
+      $('pf-route-string').classList.remove('hidden')
+    } else {
+      $('pf-route-string').classList.add('hidden')
+    }
+
+    $('pf-actions').classList.remove('hidden')
+  } else {
+    $('pf-route-details').style.display = 'none'
+    $('pf-route-string').classList.add('hidden')
+    $('pf-actions').classList.add('hidden')
+  }
+}
+
+// Créer un booking
+$('btn-create-booking').addEventListener('click', async () => {
+  const route = preflightRoutes.find(r => r.id == $('pf-route-select').value)
+  if (!route) return
+
+  $('btn-create-booking').disabled = true
+  const res = await window.bzh.createBooking(route.id)
+  $('btn-create-booking').disabled = false
+
+  const statusEl = $('pf-booking-status')
+  statusEl.classList.remove('hidden')
+  if (res.success) {
+    $('pf-flight-number').value = res.flight_number
+    statusEl.className = 'pf-booking-ok'
+    statusEl.textContent = `Réservation créée : ${res.flight_number}`
+  } else {
+    statusEl.className = 'pf-booking-err'
+    statusEl.textContent = res.error || 'Erreur lors de la réservation'
+  }
+})
+
+// Ouvrir SimBrief
+$('btn-simbrief').addEventListener('click', () => {
+  const route = preflightRoutes.find(r => r.id == $('pf-route-select').value)
+  if (!route) return
+  const user = window._bzhUser || {}
+  window.bzh.openSimBrief({
+    orig:     route.departure_icao,
+    dest:     route.arrival_icao,
+    route:    route.ifps_route || route.route_string || '',
+    callsign: user.callsign || ''
+  })
+})
+
+// Toggle ligne / vol libre
+document.querySelectorAll('.pf-mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    preflightMode = btn.dataset.mode
+    document.querySelectorAll('.pf-mode-btn').forEach(b => b.classList.toggle('active', b === btn))
+    $('pf-mode-ligne').style.display = preflightMode === 'ligne' ? '' : 'none'
+    $('pf-mode-libre').style.display = preflightMode === 'libre' ? '' : 'none'
+  })
+})
+
+function getPreflightData () {
+  if (preflightMode === 'ligne') {
+    const route = preflightRoutes.find(r => r.id == $('pf-route-select').value)
+    return {
+      origIcao:     $('pf-orig-display').value,
+      destIcao:     route ? route.arrival_icao : '',
+      aircraft:     route ? route.aircraft_type : '',
+      flightNumber: $('pf-flight-number').value.trim()
+    }
+  } else {
+    return {
+      origIcao:     $('pf-orig-libre').value.trim().toUpperCase(),
+      destIcao:     $('pf-dest-libre').value.trim().toUpperCase(),
+      aircraft:     $('pf-aircraft-libre').value.trim(),
+      flightNumber: $('pf-flight-number-libre').value.trim()
+    }
+  }
+}
 
 // ─── Simulateur ───────────────────────────────────────────────────────────
 $('btn-connect-sim').addEventListener('click', async () => {
@@ -106,6 +287,8 @@ window.bzh.on('sim:status', ({ status }) => {
     $('sim-badge').textContent = 'CONNECTÉ'
     $('sim-badge').className = 'badge badge--connected'
     $('sim-select').disabled = true
+    $('card-preflight').classList.remove('hidden')
+    loadPreflight()
   } else {
     state.simConnected = false
     setSimStatus('disconnected', 'Déconnecté')
@@ -114,6 +297,7 @@ window.bzh.on('sim:status', ({ status }) => {
     $('sim-badge').textContent = 'DÉCONNECTÉ'
     $('sim-badge').className = 'badge'
     $('sim-select').disabled = false
+    $('card-preflight').classList.add('hidden')
   }
 })
 
@@ -156,8 +340,13 @@ window.bzh.on('sim:flight-start', (data) => {
   state.flightActive = true
   state.flightStartTime = data.time
   state.pirepFuelStart = null
+  state.detectedDepIcao = data.depIcao || null
   startTimer()
-  $('card-pirep').classList.add('hidden')
+  showPage('page-vol')
+  const pf = getPreflightData()
+  // Utiliser l'AD détecté si le champ pré-vol est vide
+  if (!pf.origIcao && data.depIcao) pf.origIcao = data.depIcao
+  window.bzh.startFlight({ ...data, ...pf })
 })
 
 window.bzh.on('sim:flight-end', (data) => {
@@ -165,12 +354,20 @@ window.bzh.on('sim:flight-end', (data) => {
   stopTimer()
   state.pirepDuration = data.duration
 
-  // Pré-remplir PIREP
+  const pf = getPreflightData()
+  $('pirep-dep').value      = pf.origIcao || state.detectedDepIcao || ''
+  $('pirep-arr').value      = data.arrIcao || pf.destIcao || ''
+  $('pirep-aircraft').value = pf.aircraft || ''
   $('pirep-duration').value = data.duration
+  $('pirep-distance').value = data.distance   ?? ''
+  $('pirep-fuel').value     = data.fuelUsed   ?? ''
+  $('pirep-fpm').value      = data.landingFpm ?? ''
 
-  // Afficher le formulaire PIREP
-  $('card-pirep').classList.remove('hidden')
-  $('card-pirep').scrollIntoView({ behavior: 'smooth' })
+  $('pirep-waiting').classList.add('hidden')
+  $('form-pirep').classList.remove('hidden')
+  $('pirep-badge').classList.remove('hidden')
+  $('nav-pirep-badge').classList.remove('hidden')
+  showPage('page-pirep')
 })
 
 // ─── Timer de vol ─────────────────────────────────────────────────────────
@@ -247,16 +444,12 @@ $('form-pirep').addEventListener('submit', async (e) => {
   setPirepLoading(false)
 
   if (res.success) {
-    $('card-pirep').classList.add('hidden')
     resetPirepForm()
-    // Feedback visuel
-    const badge = $('sim-badge')
-    badge.textContent = 'PIREP ENVOYÉ ✓'
-    badge.className = 'badge badge--success'
-    setTimeout(() => {
-      badge.textContent = state.simConnected ? 'CONNECTÉ' : 'DÉCONNECTÉ'
-      badge.className = state.simConnected ? 'badge badge--connected' : 'badge'
-    }, 3000)
+    $('pirep-badge').classList.add('hidden')
+    $('nav-pirep-badge').classList.add('hidden')
+    $('pirep-waiting').classList.remove('hidden')
+    $('form-pirep').classList.add('hidden')
+    showPage('page-vol')
   } else {
     $('pirep-error').textContent = res.error || 'Erreur lors de l\'envoi'
     $('pirep-error').classList.remove('hidden')
@@ -274,7 +467,9 @@ function resetPirepForm () {
   $('pirep-arr').value = ''
   $('pirep-aircraft').value = ''
   $('pirep-duration').value = ''
+  $('pirep-distance').value = ''
   $('pirep-fuel').value = ''
+  $('pirep-fpm').value = ''
   $('pirep-remarks').value = ''
   state.pirepRating = 5
   document.querySelectorAll('#pirep-rating span').forEach((s) => s.classList.add('active'))
@@ -284,7 +479,10 @@ function resetFlight () {
   state.simConnected = false
   state.flightActive = false
   stopTimer()
-  $('card-pirep').classList.add('hidden')
+  $('nav-pirep-badge').classList.add('hidden')
+  $('pirep-badge').classList.add('hidden')
+  $('pirep-waiting').classList.remove('hidden')
+  $('form-pirep').classList.add('hidden')
   setSimStatus('disconnected', 'En attente de connexion...')
   $('sim-badge').textContent = 'DÉCONNECTÉ'
   $('sim-badge').className = 'badge'

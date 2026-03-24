@@ -10,9 +10,10 @@ const DEF_ID = 0
 const REQ_ID = 0
 
 class SimConnectBridge {
-  constructor (mainWindow, apiClient) {
+  constructor (mainWindow, apiClient, onDisconnect) {
     this.mainWindow = mainWindow
     this.apiClient = apiClient
+    this.onDisconnect = onDisconnect || null
     this.handle = null
     this.interval = null
     this.currentData = null
@@ -20,10 +21,25 @@ class SimConnectBridge {
     this.flightStarted = false
     this.flightStartTime = null
     this.flightLog = []
+    this.totalDistanceNm = 0
+    this.lastPosition = null
+    this.lastVs = 0
+    this.touchdownVs = 0
+    this.landingCandidate = false
+    this.fuelAtTakeoff = null
   }
 
   async connect () {
-    const { recvOpen, handle } = await open('BZH Tracker', Protocol.FSX_SP2)
+    let recvOpen, handle
+    try {
+      ;({ recvOpen, handle } = await open('BZH Tracker', Protocol.SunRise))
+    } catch (e) {
+      if (e.message && e.message.includes('protocol')) {
+        ;({ recvOpen, handle } = await open('BZH Tracker', Protocol.KittyHawk))
+      } else {
+        throw e
+      }
+    }
     this.handle = handle
     console.log('[SimConnect] Connecté :', recvOpen.applicationName)
 
@@ -48,6 +64,7 @@ class SimConnectBridge {
 
     handle.on('simObjectDataByType', (recv) => this._onData(recv))
     handle.on('exception',           (e)    => console.error('[SimConnect] Exception:', e))
+    handle.on('error',               (e)    => { console.error('[SimConnect] Erreur:', e.message); this._onDisconnect() })
     handle.on('quit',                ()     => this._onDisconnect())
     handle.on('close',               ()     => this._onDisconnect())
 
@@ -77,53 +94,78 @@ class SimConnectBridge {
     this.mainWindow.webContents.send('sim:data', data)
 
     if (this.isOnGround && !data.onGround && data.ias > 40) {
+      // Décollage détecté
+      this.landingCandidate = false
       this._onTakeoff(data)
-    } else if (!this.isOnGround && data.onGround && data.gs < 30) {
+    } else if (!this.isOnGround && data.onGround && this.flightStarted) {
+      // Roues au sol — début du candidat atterrissage
+      this.landingCandidate = true
+      this.touchdownVs = data.vs
+      console.log('[SimConnect] Roues au sol, attente immobilisation...')
+    } else if (this.landingCandidate && !data.onGround) {
+      // Remise des gaz détectée
+      this.landingCandidate = false
+      console.log('[SimConnect] Remise des gaz détectée, vol continue')
+    } else if (this.landingCandidate && data.onGround && data.gs < 10) {
+      // Avion immobilisé → atterrissage confirmé
+      this.landingCandidate = false
       this._onLanding(data)
     }
 
     this.isOnGround = data.onGround
 
+    this.lastVs = data.vs
+
     if (this.flightStarted) {
-      this.flightLog.push({
-        lat: data.latitude, lng: data.longitude,
-        alt: data.altitude, ias: data.ias,
-        hdg: data.heading,  vs:  data.vs,
-        ts:  data.timestamp
-      })
+      if (this.lastPosition) {
+        this.totalDistanceNm += _haversineNm(
+          this.lastPosition.latitude, this.lastPosition.longitude,
+          data.latitude, data.longitude
+        )
+      }
+      this.lastPosition = data
       this.apiClient.sendPosition(data)
     }
   }
 
-  _onTakeoff (data) {
+  async _onTakeoff (data) {
     this.flightStarted = true
     this.flightStartTime = Date.now()
     this.flightLog = []
+    this.totalDistanceNm = 0
+    this.lastPosition = data
+    this.fuelAtTakeoff = data.fuel
     console.log('[SimConnect] Décollage détecté')
+
+    const depIcao = await this.apiClient.getNearestAirport(data.latitude, data.longitude)
+    console.log('[SimConnect] AD départ détecté:', depIcao || 'inconnu')
+
     this.mainWindow.webContents.send('sim:flight-start', {
       lat: data.latitude,
       lng: data.longitude,
-      time: this.flightStartTime
+      time: this.flightStartTime,
+      depIcao
     })
-    this.apiClient.startFlight({ lat: data.latitude, lng: data.longitude })
   }
 
-  _onLanding (data) {
+  async _onLanding (data) {
     this.flightStarted = false
-    const duration = Math.round((Date.now() - this.flightStartTime) / 1000 / 60) // minutes
-    console.log('[SimConnect] Atterrissage détecté, durée:', duration, 'min')
-    this.mainWindow.webContents.send('sim:flight-end', {
-      lat: data.latitude,
-      lng: data.longitude,
-      duration,
-      log: this.flightLog
-    })
-    this.apiClient.endFlight({ lat: data.latitude, lng: data.longitude, duration })
+    const duration   = Math.round((Date.now() - this.flightStartTime) / 1000 / 60)
+    const distance   = Math.round(this.totalDistanceNm)
+    const landingFpm = this.touchdownVs
+    const fuelUsed   = this.fuelAtTakeoff !== null ? Math.round(this.fuelAtTakeoff - data.fuel) : null
+
+    const arrIcao = await this.apiClient.getNearestAirport(data.latitude, data.longitude)
+    console.log('[SimConnect] Atterrissage — durée:', duration, 'min | distance:', distance, 'NM | VS:', landingFpm, 'fpm | carburant:', fuelUsed, 'gal | arr:', arrIcao || 'inconnu')
+
+    this.mainWindow.webContents.send('sim:flight-end', { duration, distance, landingFpm, fuelUsed, arrIcao })
+    this.apiClient.endFlight({ duration, distance, fuelUsed, landingFpm })
   }
 
   _onDisconnect () {
     this._sendStatus('disconnected')
     this.disconnect()
+    if (this.onDisconnect) this.onDisconnect()
   }
 
   _sendStatus (status) {
@@ -138,6 +180,16 @@ class SimConnectBridge {
     }
     this._sendStatus('disconnected')
   }
+}
+
+function _haversineNm (lat1, lon1, lat2, lon2) {
+  const R = 3440.065 // rayon terrestre en NM
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLon = (lon2 - lon1) * Math.PI / 180
+  const a = Math.sin(dLat / 2) ** 2 +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLon / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
 module.exports = SimConnectBridge
