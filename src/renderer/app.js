@@ -162,6 +162,7 @@ function loadPreflight () {
       if (match) sel.value = match.id
       $('pf-flight-number').value = b.flight_number || ''
       updateRouteDetails(match || null)
+      setBookingActive(true)
     }
   })
 }
@@ -170,6 +171,11 @@ $('pf-route-select').addEventListener('change', () => {
   const route = preflightRoutes.find(r => r.id == $('pf-route-select').value)
   updateRouteDetails(route || null)
 })
+
+function setBookingActive (active) {
+  $('btn-create-booking').classList.toggle('hidden', active)
+  $('btn-cancel-booking').classList.toggle('hidden', !active)
+}
 
 function updateRouteDetails (route) {
   $('pf-booking-status').className = 'hidden'
@@ -210,9 +216,29 @@ $('btn-create-booking').addEventListener('click', async () => {
     $('pf-flight-number').value = res.flight_number
     statusEl.className = 'pf-booking-ok'
     statusEl.textContent = `Réservation créée : ${res.flight_number}`
+    setBookingActive(true)
   } else {
     statusEl.className = 'pf-booking-err'
     statusEl.textContent = res.error || 'Erreur lors de la réservation'
+  }
+})
+
+// Annuler un booking
+$('btn-cancel-booking').addEventListener('click', async () => {
+  $('btn-cancel-booking').disabled = true
+  const res = await window.bzh.cancelBooking()
+  $('btn-cancel-booking').disabled = false
+
+  const statusEl = $('pf-booking-status')
+  statusEl.classList.remove('hidden')
+  if (res.success) {
+    $('pf-flight-number').value = ''
+    statusEl.className = 'pf-booking-err'
+    statusEl.textContent = 'Réservation annulée'
+    setBookingActive(false)
+  } else {
+    statusEl.className = 'pf-booking-err'
+    statusEl.textContent = res.error || 'Erreur lors de l\'annulation'
   }
 })
 

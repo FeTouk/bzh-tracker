@@ -233,6 +233,15 @@ ipcMain.handle('flight:booking', async (_, routeId) => {
   }
 })
 
+ipcMain.handle('flight:cancelBooking', async () => {
+  try {
+    const result = await apiClient.cancelBooking()
+    return { success: result.success }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+})
+
 ipcMain.handle('auth:openWebAuth', () => {
   const baseUrl = process.env.BZH_WEB_URL || 'https://breizhair.fr'
   shell.openExternal(baseUrl + '/tracker/auth')
@@ -299,7 +308,7 @@ async function tryConnectSim (simType) {
     if (simType === 'msfs' || simType === 'p3d' || simType === 'fsx') {
       simBridge = new SimConnectBridge(mainWindow, apiClient, onSimDisco)
     } else if (simType === 'xplane') {
-      simBridge = new XPlaneBridge(mainWindow, apiClient)
+      simBridge = new XPlaneBridge(mainWindow, apiClient, onSimDisco)
     } else {
       return false
     }

@@ -372,6 +372,11 @@ textarea { resize: none; }
 }
 .btn--primary:hover { opacity: 0.85; }
 .btn--primary:active { opacity: 0.7; }
+.btn--danger {
+  background: #dc2626; color: #fff;
+}
+.btn--danger:hover { opacity: 0.85; }
+.btn--danger:active { opacity: 0.7; }
 .btn--secondary {
   background: transparent; color: var(--text-muted);
   border: 1px solid var(--border);

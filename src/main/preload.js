@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('bzh', {
   // Vol
   getPreflight:   () => ipcRenderer.invoke('flight:preflight'),
   createBooking:  (routeId) => ipcRenderer.invoke('flight:booking', routeId),
+  cancelBooking:  () => ipcRenderer.invoke('flight:cancelBooking'),
   openSimBrief:   (params) => ipcRenderer.invoke('shell:simbrief', params),
   startFlight:  (data) => ipcRenderer.invoke('flight:start', data),
 

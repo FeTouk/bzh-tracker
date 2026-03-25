@@ -86,6 +86,11 @@ class ApiClient {
     return res.data
   }
 
+  async cancelBooking () {
+    const res = await this.http.delete('/tracker/booking')
+    return res.data
+  }
+
   async getNearestAirport (lat, lng) {
     try {
       const res = await this.http.get('/tracker/airport/nearest', { params: { lat, lng } })

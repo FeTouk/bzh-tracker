@@ -1,156 +1,225 @@
 const dgram = require('dgram')
 
-// X-Plane envoie des datagrams UDP sur le port 49000 (DATA output)
-// On configure X-Plane pour envoyer les groupes de données nécessaires
-// via le menu Data Output dans X-Plane
+// Protocole RREF : le tracker s'abonne directement aux datarefs X-Plane
+// Aucune configuration requise dans X-Plane (Settings > Data Output non nécessaire)
+// X-Plane doit tourner sur 127.0.0.1:49000 (par défaut)
+const XPLANE_HOST  = '127.0.0.1'
+const XPLANE_PORT  = 49000   // port où X-Plane écoute
+const LISTEN_PORT  = 49001   // port où on reçoit les réponses
+const RREF_HZ      = 4       // fréquence de mise à jour en Hz
+const API_SEND_INTERVAL_MS = 5000
 
-const XPLANE_UDP_PORT = 49000
-const SEND_INTERVAL_MS = 5000
+// Datarefs à lire — chaque ID est arbitraire mais unique
+const DATAREFS = [
+  { id: 0,  key: 'lat',      path: 'sim/flightmodel/position/latitude'           }, // degrés
+  { id: 1,  key: 'lon',      path: 'sim/flightmodel/position/longitude'          }, // degrés
+  { id: 2,  key: 'alt_m',    path: 'sim/flightmodel/position/elevation'          }, // mètres MSL
+  { id: 3,  key: 'ias',      path: 'sim/flightmodel/position/indicated_airspeed' }, // kias (noeuds)
+  { id: 4,  key: 'tas_ms',   path: 'sim/flightmodel/position/true_airspeed'      }, // m/s
+  { id: 5,  key: 'gs_ms',    path: 'sim/flightmodel/position/groundspeed'        }, // m/s
+  { id: 6,  key: 'vs',       path: 'sim/flightmodel/position/vh_ind_fpm'         }, // ft/min
+  { id: 7,  key: 'heading',  path: 'sim/flightmodel/position/psi'                }, // degrés vrai
+  { id: 8,  key: 'bank',     path: 'sim/flightmodel/position/phi'                }, // degrés
+  { id: 9,  key: 'pitch',    path: 'sim/flightmodel/position/theta'              }, // degrés
+  { id: 10, key: 'onground', path: 'sim/flightmodel/failures/onground_any'       }, // 0 ou 1
+  { id: 11, key: 'fuel_kg',  path: 'sim/flightmodel/weight/m_fuel_total'         }, // kg
+]
 
-// Index des groupes de données X-Plane (DATA groups)
-// Voir X-Plane manual pour la liste complète
-const DATA_GROUPS = {
-  3:  'speeds',       // speeds (IAS, TAS, GS...)
-  17: 'pitch_roll',   // pitch & roll
-  18: 'heading',      // heading
-  20: 'altitude',     // altitude
-  21: 'position',     // lat/lon/alt
-  45: 'fuel',         // fuel quantity
-  134: 'onground'     // on_ground (gear forces)
-}
+const ID_TO_KEY = {}
+DATAREFS.forEach(dr => { ID_TO_KEY[dr.id] = dr.key })
 
 class XPlaneBridge {
-  constructor (mainWindow, apiClient) {
+  constructor (mainWindow, apiClient, onDisconnect) {
     this.mainWindow = mainWindow
     this.apiClient = apiClient
+    this.onDisconnect = onDisconnect || null
     this.socket = null
-    this.interval = null
-    this.lastData = {}
+    this.values = {}
     this.currentData = null
     this.isOnGround = true
     this.flightStarted = false
     this.flightStartTime = null
-    this.flightLog = []
+    this.totalDistanceNm = 0
+    this.lastPosition = null
+    this.touchdownVs = 0
+    this.landingCandidate = false
+    this.fuelAtTakeoff = null
     this._sendTimer = null
+    this._pingTimer = null
   }
 
   async connect () {
     return new Promise((resolve, reject) => {
-      this.socket = dgram.createSocket('udp4')
+      const socket = dgram.createSocket('udp4')
+      this.socket = socket
 
-      this.socket.bind(XPLANE_UDP_PORT, '0.0.0.0', () => {
-        console.log('[X-Plane] UDP écouté sur port', XPLANE_UDP_PORT)
+      socket.once('error', (err) => reject(err))
+
+      socket.bind(LISTEN_PORT, '0.0.0.0', () => {
+        console.log('[X-Plane] Socket sur port', LISTEN_PORT, '→ X-Plane', XPLANE_HOST + ':' + XPLANE_PORT)
+
+        socket.removeAllListeners('error')
+        socket.on('error', (err) => {
+          console.error('[X-Plane] Erreur socket:', err.message)
+          this._onDisconnect()
+        })
+
+        socket.on('message', (msg) => this._parseMessage(msg))
+
+        // Abonnement initial aux datarefs
+        this._subscribeAll()
+
+        // Ré-abonnement toutes les 30s (si X-Plane redémarre)
+        this._pingTimer = setInterval(() => {
+          if (this.socket) this._subscribeAll()
+        }, 30000)
+
+        // Envoi position API
+        this._sendTimer = setInterval(() => {
+          if (this.currentData && this.flightStarted) {
+            this.apiClient.sendPosition(this.currentData)
+          }
+        }, API_SEND_INTERVAL_MS)
+
         this._sendStatus('connected')
         resolve()
       })
-
-      this.socket.on('error', (err) => {
-        console.error('[X-Plane] Erreur UDP:', err)
-        this._sendStatus('error')
-        reject(err)
-      })
-
-      this.socket.on('message', (msg) => this._parseMessage(msg))
-
-      // Timer d'envoi agrégé (toutes les 5s)
-      this._sendTimer = setInterval(() => {
-        if (this.currentData) {
-          this._processData(this.currentData)
-        }
-      }, SEND_INTERVAL_MS)
     })
   }
 
+  _subscribeAll () {
+    DATAREFS.forEach(dr => this._sendRREF(dr.id, RREF_HZ, dr.path))
+    console.log('[X-Plane] Abonnements RREF envoyés (' + DATAREFS.length + ' datarefs @ ' + RREF_HZ + 'Hz)')
+  }
+
+  // Format paquet RREF : "RREF\0" (5) + freq(int32LE,4) + id(int32LE,4) + path(char[400])
+  _sendRREF (id, freq, path) {
+    const buf = Buffer.alloc(413)
+    buf.write('RREF', 0, 'ascii')
+    buf[4] = 0
+    buf.writeInt32LE(freq, 5)
+    buf.writeInt32LE(id,   9)
+    buf.write(path, 13, 'ascii')
+    this.socket.send(buf, XPLANE_PORT, XPLANE_HOST, (err) => {
+      if (err) console.error('[X-Plane] Erreur envoi RREF:', err.message)
+    })
+  }
+
+  // Réponse RREF : "RREF\0" (5) + N × [id(int32LE,4) + value(float32LE,4)]
   _parseMessage (buf) {
-    // Format X-Plane DATA: header "DATA" (4 bytes) + index_byte + 8 floats × 4 bytes
     if (buf.length < 5) return
     const header = buf.slice(0, 4).toString('ascii')
-    if (header !== 'DATA') return
+    if (header !== 'RREF') {
+      console.log('[X-Plane] Paquet inconnu:', JSON.stringify(header), buf.length, 'octets')
+      return
+    }
 
     let offset = 5
-    while (offset + 36 <= buf.length) {
-      const groupId = buf.readInt32LE(offset)
-      offset += 4
-      const values = []
-      for (let i = 0; i < 8; i++) {
-        values.push(buf.readFloatLE(offset))
-        offset += 4
-      }
-      this.lastData[groupId] = values
+    while (offset + 8 <= buf.length) {
+      const id    = buf.readInt32LE(offset)
+      const value = buf.readFloatLE(offset + 4)
+      offset += 8
+      const key = ID_TO_KEY[id]
+      if (key !== undefined) this.values[key] = value
     }
 
-    // Construire un objet data consolidé
-    this.currentData = this._buildDataObject()
-    // Envoi immédiat à l'UI (throttlé par le timer pour l'API)
-    if (this.currentData) {
-      this.mainWindow.webContents.send('sim:data', this.currentData)
-    }
+    const data = this._buildDataObject()
+    if (!data) return
+
+    this.currentData = data
+    this.mainWindow.webContents.send('sim:data', data)
+    this._processGroundState(data)
   }
 
   _buildDataObject () {
-    const d = this.lastData
-    if (!d[21]) return null // pas encore de position
+    const v = this.values
+    if (v.lat === undefined) return null
 
-    const speeds    = d[3]  || [0, 0, 0, 0, 0, 0, 0, 0]
-    const pitchRoll = d[17] || [0, 0, 0, 0, 0, 0, 0, 0]
-    const heading   = d[18] || [0, 0, 0, 0, 0, 0, 0, 0]
-    const position  = d[21]
-    const fuel      = d[45] || [0, 0, 0, 0, 0, 0, 0, 0]
-    const onground  = d[134]
+    const ias = Math.round(Math.abs(v.ias    || 0))
+    const gs  = Math.round(Math.abs((v.gs_ms  || 0) * 1.94384))
+    const tas = Math.round(Math.abs((v.tas_ms || 0) * 1.94384))
+    // Carburant : kg → gallons (avgas ≈ 2.72 kg/gal)
+    const fuel = Math.round(Math.abs((v.fuel_kg || 0) / 2.72))
 
     return {
-      latitude:  position[0],
-      longitude: position[1],
-      altitude:  Math.round(position[2] * 3.28084), // mètres → pieds
-      ias:       Math.round(speeds[0] * 1.94384),   // m/s → noeuds
-      tas:       Math.round(speeds[2] * 1.94384),
-      gs:        Math.round(speeds[4] * 1.94384),
-      vs:        Math.round(d[20] ? d[20][2] * 196.85 : 0), // m/s → fpm
-      heading:   Math.round(heading[0]),
-      pitch:     parseFloat(pitchRoll[0].toFixed(1)),
-      bank:      parseFloat(pitchRoll[1].toFixed(1)),
-      fuel:      Math.round(fuel[0] * 0.264172),  // litres → gallons
-      onGround:  onground ? onground[0] > 0.5 : true,
+      latitude:  v.lat     || 0,
+      longitude: v.lon     || 0,
+      altitude:  Math.round((v.alt_m || 0) * 3.28084), // m → ft
+      ias,
+      tas,
+      gs,
+      vs:        Math.round(v.vs      || 0),
+      heading:   Math.round(v.heading || 0),
+      pitch:     parseFloat((v.pitch  || 0).toFixed(1)),
+      bank:      parseFloat((v.bank   || 0).toFixed(1)),
+      fuel,
+      onGround:  (v.onground || 0) > 0.5,
       timestamp: Date.now()
     }
   }
 
-  _processData (data) {
+  _processGroundState (data) {
     if (this.isOnGround && !data.onGround && data.ias > 40) {
+      this.landingCandidate = false
       this._onTakeoff(data)
-    } else if (!this.isOnGround && data.onGround && data.gs < 30) {
+    } else if (!this.isOnGround && data.onGround && this.flightStarted) {
+      this.landingCandidate = true
+      this.touchdownVs = data.vs
+      console.log('[X-Plane] Touchdown, VS:', data.vs, 'fpm')
+    } else if (this.landingCandidate && !data.onGround) {
+      this.landingCandidate = false
+      console.log('[X-Plane] Remise des gaz détectée')
+    } else if (this.landingCandidate && data.onGround && data.gs < 10) {
+      this.landingCandidate = false
       this._onLanding(data)
     }
-    this.isOnGround = data.onGround
 
-    if (this.flightStarted) {
-      this.flightLog.push({
-        lat: data.latitude, lng: data.longitude,
-        alt: data.altitude, ias: data.ias,
-        hdg: data.heading,  vs: data.vs,
-        ts:  data.timestamp
-      })
-      this.apiClient.sendPosition(data)
+    if (this.flightStarted && this.lastPosition) {
+      this.totalDistanceNm += _haversineNm(
+        this.lastPosition.latitude, this.lastPosition.longitude,
+        data.latitude, data.longitude
+      )
     }
+
+    this.isOnGround = data.onGround
+    if (this.flightStarted) this.lastPosition = data
   }
 
-  _onTakeoff (data) {
+  async _onTakeoff (data) {
     this.flightStarted = true
     this.flightStartTime = Date.now()
-    this.flightLog = []
+    this.totalDistanceNm = 0
+    this.lastPosition = data
+    this.fuelAtTakeoff = data.fuel
+    console.log('[X-Plane] Décollage détecté')
+
+    const depIcao = await this.apiClient.getNearestAirport(data.latitude, data.longitude)
+    console.log('[X-Plane] AD départ:', depIcao || 'inconnu')
+
     this.mainWindow.webContents.send('sim:flight-start', {
-      lat: data.latitude, lng: data.longitude, time: this.flightStartTime
+      lat: data.latitude, lng: data.longitude,
+      time: this.flightStartTime, depIcao
     })
-    this.apiClient.startFlight({ lat: data.latitude, lng: data.longitude })
   }
 
-  _onLanding (data) {
+  async _onLanding (data) {
     this.flightStarted = false
-    const duration = Math.round((Date.now() - this.flightStartTime) / 60000)
-    this.mainWindow.webContents.send('sim:flight-end', {
-      lat: data.latitude, lng: data.longitude, duration, log: this.flightLog
-    })
-    this.apiClient.endFlight({ lat: data.latitude, lng: data.longitude, duration })
+    const duration   = Math.round((Date.now() - this.flightStartTime) / 60000)
+    const distance   = Math.round(this.totalDistanceNm)
+    const landingFpm = this.touchdownVs
+    const fuelUsed   = this.fuelAtTakeoff !== null ? Math.round(this.fuelAtTakeoff - data.fuel) : null
+
+    const arrIcao = await this.apiClient.getNearestAirport(data.latitude, data.longitude)
+    console.log('[X-Plane] Atterrissage — durée:', duration, 'min | dist:', distance, 'NM | VS:', landingFpm, 'fpm | carb:', fuelUsed, 'gal')
+
+    this.mainWindow.webContents.send('sim:flight-end', { duration, distance, landingFpm, fuelUsed, arrIcao })
+    this.apiClient.endFlight({ duration, distance, fuelUsed, landingFpm })
+  }
+
+  _onDisconnect () {
+    this._sendStatus('disconnected')
+    this.disconnect()
+    if (this.onDisconnect) this.onDisconnect()
   }
 
   _sendStatus (status) {
@@ -158,13 +227,28 @@ class XPlaneBridge {
   }
 
   disconnect () {
+    if (this._pingTimer) { clearInterval(this._pingTimer); this._pingTimer = null }
     if (this._sendTimer) { clearInterval(this._sendTimer); this._sendTimer = null }
     if (this.socket) {
-      try { this.socket.close() } catch (_) {}
-      this.socket = null
+      // Désabonnement propre avant fermeture
+      try { DATAREFS.forEach(dr => this._sendRREF(dr.id, 0, dr.path)) } catch (_) {}
+      setTimeout(() => {
+        try { this.socket.close() } catch (_) {}
+        this.socket = null
+      }, 200)
     }
     this._sendStatus('disconnected')
   }
+}
+
+function _haversineNm (lat1, lon1, lat2, lon2) {
+  const R = 3440.065
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLon = (lon2 - lon1) * Math.PI / 180
+  const a = Math.sin(dLat / 2) ** 2 +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLon / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
 module.exports = XPlaneBridge
