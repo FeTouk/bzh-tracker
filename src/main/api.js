@@ -159,13 +159,32 @@ class ApiClient {
   endFlight (data) {
     // Stocke les données techniques pour submitPirep
     this.pendingFlightData = {
-      flight_hash:              this.currentFlightId,
-      block_minutes:            data.duration,
-      distance:                 data.distance             || 0,
-      fuel_used:                data.fuelUsed             ?? null,
-      landing_fpm:              data.landingFpm           ?? null,
-      pause_seconds:            data.pauseSeconds         ?? 0,
-      speed_violation_seconds:  data.speedViolationSeconds ?? 0,
+      flight_hash:                   this.currentFlightId,
+      block_minutes:                 data.duration,
+      distance:                      data.distance                ?? 0,
+      fuel_used:                     data.fuelUsed                ?? null,
+      landing_fpm:                   data.landingFpm              ?? null,
+      pause_seconds:                 data.pauseSeconds            ?? 0,
+      speed_violation_seconds:       data.speedViolationSeconds   ?? 0,
+      // FSACARS extended
+      takeoff_flaps:                 data.takeoffFlaps            ?? null,
+      takeoff_speed:                 data.takeoffSpeed            ?? null,
+      takeoff_weight:                data.takeoffWeight           ?? null,
+      takeoff_headwind:              data.takeoffHeadwind         ?? null,
+      takeoff_crosswind:             data.takeoffCrosswind        ?? null,
+      zero_fuel_weight:              data.zfw                     ?? null,
+      payload:                       data.payload                 ?? null,
+      landing_flaps:                 data.landingFlaps            ?? null,
+      landing_speed:                 data.landingSpeed            ?? null,
+      landing_weight:                data.landingWeight           ?? null,
+      landing_headwind:              data.landingHeadwind         ?? null,
+      landing_crosswind:             data.landingCrosswind        ?? null,
+      origin_max_taxi_speed:         data.originMaxTaxiSpeed      ?? null,
+      destination_max_taxi_speed:    data.destMaxTaxiSpeed        ?? null,
+      taxi_fuel:                     data.taxiFuelKg              ?? null,
+      avg_wind_direction:            data.avgWindDir              ?? null,
+      avg_wind_speed:                data.avgWindSpeed            ?? null,
+      fs_version:                    data.fsVersion               ?? null,
     }
     this._sendApiStatus('ok', 'Atterrissage détecté')
   }

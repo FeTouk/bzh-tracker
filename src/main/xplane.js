@@ -25,7 +25,14 @@ const DATAREFS = [
   { id: 9,  key: 'pitch',    path: 'sim/flightmodel/position/theta'              }, // degrés
   { id: 10, key: 'onground', path: 'sim/flightmodel/failures/onground_any'       }, // 0 ou 1
   { id: 11, key: 'fuel_kg',  path: 'sim/flightmodel/weight/m_fuel_total'         }, // kg
-  { id: 12, key: 'paused',   path: 'sim/time/paused'                             }, // 0 ou 1
+  { id: 12, key: 'paused',     path: 'sim/time/paused'                                          }, // 0 ou 1
+  // FSACARS extended data
+  { id: 13, key: 'flap_ratio', path: 'sim/cockpit2/controls/flap_handle_deploy_ratio'           }, // 0..1
+  { id: 14, key: 'flap_max',   path: 'sim/aircraft/controls/acf_flap1'                          }, // deg max
+  { id: 15, key: 'weight_kg',  path: 'sim/flightmodel/weight/m_total'                           }, // kg total
+  { id: 16, key: 'empty_kg',   path: 'sim/aircraft/weight/acf_m_empty'                          }, // kg vide
+  { id: 17, key: 'wind_dir',   path: 'sim/cockpit2/gauges/indicators/wind_heading_deg_mag'      }, // degrés
+  { id: 18, key: 'wind_speed', path: 'sim/cockpit2/gauges/indicators/wind_speed_kts'            }, // kts
 ]
 
 const ID_TO_KEY = {}
@@ -58,6 +65,16 @@ class XPlaneBridge {
     this.speedViolationStartTime = null
     this.totalSpeedViolationSeconds = 0
     this._lastDataTime = null
+    // FSACARS extended data
+    this._landingCompleted = false
+    this.maxTaxiSpeedOnGround = 0
+    this.maxTaxiSpeedOrigin   = 0
+    this.maxTaxiSpeedDest     = 0
+    this.fuelAtGroundStart    = null
+    this.taxiFuelKg           = null
+    this.takeoffSnapshot      = null
+    this.touchdownSnapshot    = null
+    this._windSamples         = []
   }
 
   async connect () {
@@ -178,36 +195,76 @@ class XPlaneBridge {
     const v = this.values
     if (v.lat === undefined) return null
 
-    const ias = Math.round(Math.abs(v.ias    || 0))
-    const gs  = Math.round(Math.abs((v.gs_ms  || 0) * 1.94384))
-    const tas = Math.round(Math.abs((v.tas_ms || 0) * 1.94384))
-    // Carburant : kg → gallons (avgas ≈ 2.72 kg/gal)
-    const fuel = Math.round(Math.abs((v.fuel_kg || 0) / 2.72))
+    const heading  = Math.round(v.heading || 0)
+    const ias      = Math.round(Math.abs(v.ias    || 0))
+    const gs       = Math.round(Math.abs((v.gs_ms  || 0) * 1.94384))
+    const tas      = Math.round(Math.abs((v.tas_ms || 0) * 1.94384))
+    // Carburant : kg → gallons (Jet-A ≈ 3.04 kg/gal) pour affichage
+    const fuelKg   = Math.abs(v.fuel_kg || 0)
+    const fuel     = Math.round(fuelKg / 3.04)
+    // FSACARS weights
+    const totalWeightKg = Math.round(v.weight_kg || 0)
+    const emptyWeightKg = Math.round(v.empty_kg  || 0)
+    const zfw           = Math.max(0, totalWeightKg - Math.round(fuelKg))
+    const payload       = Math.max(0, zfw - emptyWeightKg)
+    // Flaps (ratio × max_deg)
+    const flaps = Math.round((v.flap_ratio || 0) * (v.flap_max || 40))
+    // Wind
+    const windDir   = Math.round(v.wind_dir   || 0)
+    const windSpeed = Math.round(v.wind_speed || 0)
+    const windRad   = (windDir - heading) * Math.PI / 180
+    const headwind  = parseFloat((windSpeed * Math.cos(windRad)).toFixed(1))
+    const crosswind = parseFloat((windSpeed * Math.sin(windRad)).toFixed(1))
 
     return {
       latitude:  v.lat     || 0,
       longitude: v.lon     || 0,
       altitude:  Math.round((v.alt_m || 0) * 3.28084), // m → ft
-      ias,
-      tas,
-      gs,
-      vs:        Math.round(v.vs      || 0),
-      heading:   Math.round(v.heading || 0),
-      pitch:     parseFloat((v.pitch  || 0).toFixed(1)),
-      bank:      parseFloat((v.bank   || 0).toFixed(1)),
-      fuel,
+      ias, tas, gs,
+      vs:        Math.round(v.vs  || 0),
+      heading,
+      pitch:     parseFloat((v.pitch || 0).toFixed(1)),
+      bank:      parseFloat((v.bank  || 0).toFixed(1)),
+      fuel, fuelKg: Math.round(fuelKg),
       onGround:  (v.onground || 0) > 0.5,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      // FSACARS extended
+      flaps, totalWeightKg, zfw, payload, windDir, windSpeed, headwind, crosswind
     }
   }
 
   _processGroundState (data) {
+    // Taxi & fuel tracking
+    if (data.onGround) {
+      if (this.fuelAtGroundStart === null && !this.flightStarted) {
+        this.fuelAtGroundStart = data.fuelKg
+      }
+      if (!this.flightStarted && !this._landingCompleted) {
+        if (data.gs > this.maxTaxiSpeedOnGround) this.maxTaxiSpeedOnGround = data.gs
+      } else if (this._landingCompleted) {
+        if (data.gs > this.maxTaxiSpeedDest) {
+          this.maxTaxiSpeedDest = data.gs
+          if (this.apiClient.pendingFlightData) {
+            this.apiClient.pendingFlightData.destination_max_taxi_speed = this.maxTaxiSpeedDest
+          }
+        }
+      }
+    }
+    // Wind sampling during flight
+    if (this.flightStarted && !data.onGround && data.windSpeed > 0) {
+      this._windSamples.push({ dir: data.windDir, speed: data.windSpeed })
+    }
+
     if (this.isOnGround && !data.onGround && data.ias > 40) {
       this.landingCandidate = false
       this._onTakeoff(data)
     } else if (!this.isOnGround && data.onGround && this.flightStarted) {
       this.landingCandidate = true
       this.touchdownVs = data.vs
+      this.touchdownSnapshot = {
+        flaps: data.flaps, ias: data.ias, weight: data.totalWeightKg,
+        headwind: data.headwind, crosswind: data.crosswind
+      }
       console.log('[X-Plane] Touchdown, VS:', data.vs, 'fpm')
     } else if (this.landingCandidate && !data.onGround) {
       this.landingCandidate = false
@@ -268,6 +325,22 @@ class XPlaneBridge {
     this.totalPauseSeconds = 0
     this.totalSpeedViolationSeconds = 0
     this._lastDataTime = Date.now()
+    this._landingCompleted = false
+    this._windSamples = []
+    // Taxi fuel (X-Plane fuel en kg)
+    const taxiFuelKg = this.fuelAtGroundStart !== null ? Math.max(0, Math.round(this.fuelAtGroundStart - data.fuelKg)) : null
+    this.taxiFuelKg = taxiFuelKg
+    this.fuelAtGroundStart = null
+    // Lock taxi speed origin
+    this.maxTaxiSpeedOrigin   = this.maxTaxiSpeedOnGround
+    this.maxTaxiSpeedOnGround = 0
+    this.maxTaxiSpeedDest     = 0
+    // Takeoff snapshot
+    this.takeoffSnapshot = {
+      flaps: data.flaps, ias: data.ias, weight: data.totalWeightKg,
+      headwind: data.headwind, crosswind: data.crosswind,
+      zfw: data.zfw, payload: data.payload
+    }
     console.log('[X-Plane] Décollage détecté')
 
     const depIcao = findNearest(data.latitude, data.longitude)
@@ -281,6 +354,8 @@ class XPlaneBridge {
 
   _onLanding (data) {
     this.flightStarted = false
+    this._landingCompleted = true
+    this.maxTaxiSpeedDest = 0
     const duration              = Math.round((Date.now() - this.flightStartTime) / 60000)
     const distance              = Math.round(this.totalDistanceNm)
     const landingFpm            = this.touchdownVs
@@ -288,11 +363,41 @@ class XPlaneBridge {
     const pauseSeconds          = Math.round(this.totalPauseSeconds)
     const speedViolationSeconds = Math.round(this.totalSpeedViolationSeconds)
 
+    // Avg wind (vector average)
+    let avgWindDir = null, avgWindSpeed = null
+    if (this._windSamples.length > 0) {
+      avgWindSpeed = Math.round(this._windSamples.reduce((s, w) => s + w.speed, 0) / this._windSamples.length)
+      const sinSum = this._windSamples.reduce((s, w) => s + Math.sin(w.dir * Math.PI / 180), 0)
+      const cosSum = this._windSamples.reduce((s, w) => s + Math.cos(w.dir * Math.PI / 180), 0)
+      avgWindDir = Math.round(((Math.atan2(sinSum, cosSum) * 180 / Math.PI) + 360) % 360)
+    }
+
+    const to  = this.takeoffSnapshot  || {}
+    const lnd = this.touchdownSnapshot || {}
     const arrIcao = findNearest(data.latitude, data.longitude)
-    console.log('[X-Plane] Atterrissage — durée:', duration, 'min | dist:', distance, 'NM | VS:', landingFpm, 'fpm | carb:', fuelUsed, 'gal | pause:', pauseSeconds, 's | overspeed:', speedViolationSeconds, 's')
+    console.log('[X-Plane] Atterrissage — durée:', duration, 'min | dist:', distance, 'NM | VS:', landingFpm, 'fpm | carb:', fuelUsed, 'gal | arr:', arrIcao || 'inconnu')
 
     this.mainWindow.webContents.send('sim:flight-end', { duration, distance, landingFpm, fuelUsed, arrIcao, pauseSeconds, speedViolationSeconds })
-    this.apiClient.endFlight({ duration, distance, fuelUsed, landingFpm, pauseSeconds, speedViolationSeconds })
+    this.apiClient.endFlight({
+      duration, distance, fuelUsed, landingFpm, pauseSeconds, speedViolationSeconds,
+      takeoffFlaps:    to.flaps    ?? null,
+      takeoffSpeed:    to.ias      ?? null,
+      takeoffWeight:   to.weight   ?? null,
+      takeoffHeadwind: to.headwind ?? null,
+      takeoffCrosswind:to.crosswind?? null,
+      zfw:             to.zfw      ?? null,
+      payload:         to.payload  ?? null,
+      landingFlaps:    lnd.flaps   ?? null,
+      landingSpeed:    lnd.ias     ?? null,
+      landingWeight:   lnd.weight  ?? null,
+      landingHeadwind: lnd.headwind?? null,
+      landingCrosswind:lnd.crosswind?? null,
+      originMaxTaxiSpeed: this.maxTaxiSpeedOrigin || null,
+      destMaxTaxiSpeed:   0,
+      taxiFuelKg:         this.taxiFuelKg ?? null,
+      avgWindDir, avgWindSpeed,
+      fsVersion: 'XP',
+    })
   }
 
   _onDisconnect () {
