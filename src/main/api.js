@@ -193,7 +193,10 @@ class ApiClient {
     if (!this.pendingFlightData) throw new Error('Aucun vol en attente')
     const res = await this.http.post('/tracker/session/end', {
       ...this.pendingFlightData,
-      comments: pirepData.remarks || null
+      comments:  pirepData.remarks     || null,
+      // Confirmation AD réels GPS (écrasent les valeurs prévues du startSession)
+      orig_icao: pirepData.origIcao    || null,
+      dest_icao: pirepData.arrIcaoGps  || null,
     })
     this.currentFlightId = null
     this.pendingFlightData = null

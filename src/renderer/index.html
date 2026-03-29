@@ -168,69 +168,42 @@
         <div class="card" id="card-preflight">
           <div class="card-header">
             <span class="card-title">PRÉ-VOL</span>
-            <div class="pf-mode-toggle">
-              <button class="pf-mode-btn active" id="pf-btn-ligne" data-mode="ligne">Ligne</button>
-              <button class="pf-mode-btn" id="pf-btn-libre" data-mode="libre">Vol libre</button>
-            </div>
           </div>
 
-          <div id="pf-mode-ligne">
-            <div class="field">
-              <label>Départ</label>
-              <input type="text" id="pf-orig-display" class="input--icao" readonly />
-            </div>
-            <div class="field">
-              <label>Ligne disponible</label>
-              <select id="pf-route-select" class="select">
-                <option value="">— Connectez le simulateur d'abord —</option>
-              </select>
-            </div>
-            <div class="preflight-grid" id="pf-route-details" style="display:none">
-              <div class="pf-info-block">
-                <span class="pf-info-label">Arrivée</span>
-                <span class="pf-info-value" id="pf-dest-display">—</span>
-              </div>
-              <div class="pf-info-block">
-                <span class="pf-info-label">Appareil</span>
-                <span class="pf-info-value" id="pf-aircraft-display">—</span>
-              </div>
-            </div>
-            <div class="field">
-              <label>N° de vol <span class="optional">(généré par la réservation)</span></label>
-              <input type="text" id="pf-flight-number" placeholder="— Réserver pour générer —" readonly />
-            </div>
-            <div id="pf-route-string" class="pf-route-string hidden">
-              <span class="pf-info-label">Route IFPS</span>
-              <code id="pf-ifps-text"></code>
-            </div>
-            <div class="pf-actions hidden" id="pf-actions">
-              <button class="btn btn--ghost btn--sm" id="btn-simbrief">✈ SimBrief</button>
-              <button class="btn btn--primary btn--sm" id="btn-create-booking">Réserver</button>
-              <button class="btn btn--danger btn--sm hidden" id="btn-cancel-booking">Annuler</button>
-            </div>
-            <div id="pf-booking-status" class="hidden"></div>
+          <div class="field">
+            <label>Position actuelle (AD détecté)</label>
+            <input type="text" id="pf-orig-display" class="input--icao" readonly />
           </div>
-
-          <div id="pf-mode-libre" style="display:none">
-            <div class="preflight-grid">
-              <div class="field">
-                <label>Départ (ICAO)</label>
-                <input type="text" id="pf-orig-libre" placeholder="LFRB" maxlength="4" class="input--icao" />
-              </div>
-              <div class="field">
-                <label>Arrivée (ICAO)</label>
-                <input type="text" id="pf-dest-libre" placeholder="LFRS" maxlength="4" class="input--icao" />
-              </div>
-              <div class="field field--full">
-                <label>Appareil</label>
-                <input type="text" id="pf-aircraft-libre" placeholder="A320" />
-              </div>
-              <div class="field field--full">
-                <label>N° de vol <span class="optional">(optionnel)</span></label>
-                <input type="text" id="pf-flight-number-libre" placeholder="BZ0001" />
-              </div>
+          <div class="field">
+            <label>Ligne disponible</label>
+            <select id="pf-route-select" class="select">
+              <option value="">— Connectez le simulateur d'abord —</option>
+            </select>
+          </div>
+          <div class="preflight-grid" id="pf-route-details" style="display:none">
+            <div class="pf-info-block">
+              <span class="pf-info-label">Arrivée prévue</span>
+              <span class="pf-info-value" id="pf-dest-display">—</span>
+            </div>
+            <div class="pf-info-block">
+              <span class="pf-info-label">Appareil</span>
+              <span class="pf-info-value" id="pf-aircraft-display">—</span>
             </div>
           </div>
+          <div class="field">
+            <label>N° de vol <span class="optional">(généré par la réservation)</span></label>
+            <input type="text" id="pf-flight-number" placeholder="— Réserver pour générer —" readonly />
+          </div>
+          <div id="pf-route-string" class="pf-route-string hidden">
+            <span class="pf-info-label">Route IFPS</span>
+            <code id="pf-ifps-text"></code>
+          </div>
+          <div class="pf-actions hidden" id="pf-actions">
+            <button class="btn btn--ghost btn--sm" id="btn-simbrief">✈ SimBrief</button>
+            <button class="btn btn--primary btn--sm" id="btn-create-booking">Réserver</button>
+            <button class="btn btn--danger btn--sm hidden" id="btn-cancel-booking">Annuler</button>
+          </div>
+          <div id="pf-booking-status" class="hidden"></div>
         </div>
 
       </div><!-- /page-preflight -->

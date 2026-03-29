@@ -216,14 +216,12 @@ window.bzh.on('auth:restored', async ({ user }) => {
 
 // ─── Pré-vol ──────────────────────────────────────────────────────────────
 let preflightRoutes = []
-let preflightMode = 'ligne'
 
 function loadPreflight () {
   window.bzh.getPreflight().then((data) => {
     if (!data) return
 
-    $('pf-orig-display').value = data.current_airport || ''
-    $('pf-orig-libre').value   = data.current_airport || ''
+    $('pf-orig-display').value = data.current_airport || '—'
     preflightRoutes = data.routes || []
 
     const sel = $('pf-route-select')
@@ -336,32 +334,14 @@ $('btn-simbrief').addEventListener('click', () => {
   })
 })
 
-// Toggle ligne / vol libre
-document.querySelectorAll('.pf-mode-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    preflightMode = btn.dataset.mode
-    document.querySelectorAll('.pf-mode-btn').forEach(b => b.classList.toggle('active', b === btn))
-    $('pf-mode-ligne').style.display = preflightMode === 'ligne' ? '' : 'none'
-    $('pf-mode-libre').style.display = preflightMode === 'libre' ? '' : 'none'
-  })
-})
-
+// Retourne uniquement aircraft + flightNumber depuis le pré-vol ligne
+// Les AD réels (dep/arr) viennent du simulateur via GPS, pas du formulaire
 function getPreflightData () {
-  if (preflightMode === 'ligne') {
-    const route = preflightRoutes.find(r => r.id == $('pf-route-select').value)
-    return {
-      origIcao:     $('pf-orig-display').value,
-      destIcao:     route ? route.arrival_icao : '',
-      aircraft:     route ? route.aircraft_type : '',
-      flightNumber: $('pf-flight-number').value.trim()
-    }
-  } else {
-    return {
-      origIcao:     $('pf-orig-libre').value.trim().toUpperCase(),
-      destIcao:     $('pf-dest-libre').value.trim().toUpperCase(),
-      aircraft:     $('pf-aircraft-libre').value.trim(),
-      flightNumber: $('pf-flight-number-libre').value.trim()
-    }
+  const route = preflightRoutes.find(r => r.id == $('pf-route-select').value)
+  return {
+    intendedDest: route ? route.arrival_icao : '',
+    aircraft:     route ? route.aircraft_type : '',
+    flightNumber: $('pf-flight-number').value.trim()
   }
 }
 
@@ -467,28 +447,38 @@ window.bzh.on('sim:aircraft', (data) => {
 
 // ─── Événements de vol ────────────────────────────────────────────────────
 window.bzh.on('sim:flight-start', (data) => {
-  state.flightActive = true
+  state.flightActive    = true
   state.flightStartTime = data.time
-  state.pirepFuelStart = null
-  state.detectedDepIcao  = data.depIcao || null
+  state.pirepFuelStart  = null
+  // AD de départ = position GPS réelle au décollage
+  state.detectedDepIcao = data.depIcao || null
+  if (data.depIcao) $('pf-orig-display').value = data.depIcao
   startTimer()
   showPage('page-vol')
+
   const pf = getPreflightData()
-  // Sauvegarder la destination du pré-vol pour le PIREP
-  state.detectedDestIcao = pf.destIcao || null
-  // Utiliser l'AD détecté si le champ pré-vol est vide
-  if (!pf.origIcao && data.depIcao) pf.origIcao = data.depIcao
-  window.bzh.startFlight({ ...data, ...pf })
+  // origIcao = GPS réel ; destIcao = arrivée prévue de la ligne (meilleure estimation)
+  window.bzh.startFlight({
+    origIcao:     data.depIcao    || 'ZZZZ',
+    destIcao:     pf.intendedDest || 'ZZZZ',
+    aircraft:     pf.aircraft     || 'Unknown',
+    flightNumber: pf.flightNumber || null,
+    lat:          data.lat,
+    lng:          data.lng,
+    time:         data.time,
+  })
 })
 
 window.bzh.on('sim:flight-end', (data) => {
-  state.flightActive = false
+  state.flightActive    = false
+  state.detectedDestIcao = data.arrIcao || null
   stopTimer()
   state.pirepDuration = data.duration
 
   const pf = getPreflightData()
-  $('pirep-dep').value      = pf.origIcao || state.detectedDepIcao || ''
-  $('pirep-arr').value      = data.arrIcao || pf.destIcao || state.detectedDestIcao || ''
+  // AD réels GPS uniquement — les champs sont en lecture seule dans le PIREP
+  $('pirep-dep').value      = state.detectedDepIcao  || ''
+  $('pirep-arr').value      = state.detectedDestIcao || ''
   $('pirep-aircraft').value = pf.aircraft || ''
   $('pirep-duration').value = data.duration
   $('pirep-distance').value = data.distance   ?? ''
@@ -571,7 +561,10 @@ $('form-pirep').addEventListener('submit', async (e) => {
     flightTime: parseInt($('pirep-duration').value, 10) || state.pirepDuration,
     fuelUsed:   parseInt($('pirep-fuel').value, 10) || 0,
     remarks:    $('pirep-remarks').value.trim(),
-    rating:     state.pirepRating
+    rating:     state.pirepRating,
+    // AD GPS réels confirmés à l'envoi
+    origIcao:   state.detectedDepIcao  || depIcao,
+    arrIcaoGps: state.detectedDestIcao || arrIcao,
   })
 
   setPirepLoading(false)
