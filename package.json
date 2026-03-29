@@ -10,7 +10,8 @@
     "dev": "electron . --dev",
     "build": "electron-builder",
     "build:win": "electron-builder --win",
-    "build:icon": "electron-icon-builder --input=assets/icon.png --output=assets"
+    "build:icon": "electron-icon-builder --input=assets/icon.png --output=assets",
+    "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
     "axios": "^1.7.2",
@@ -28,13 +29,25 @@
   "build": {
     "appId": "fr.breizhair.tracker",
     "productName": "BZH Tracker",
+    "protocols": [
+      {
+        "name": "BZH Tracker",
+        "schemes": ["bzh-tracker"]
+      }
+    ],
     "win": {
       "target": "nsis",
       "icon": "assets/icons/win/icon.ico"
     },
     "files": [
       "src/**/*",
-      "assets/**/*"
+      "assets/**/*",
+      "node_modules/**/*",
+      "!node_modules/**/{CHANGELOG.md,README.md,readme.md,test,tests,__tests__}",
+      "!node_modules/.bin"
+    ],
+    "asarUnpack": [
+      "node_modules/node-simconnect/**/*"
     ]
   }
 }

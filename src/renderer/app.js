@@ -11,7 +11,8 @@ const state = {
   pirepRating: 5,
   pirepDuration: 0,
   pirepFuelStart: null,
-  detectedDepIcao: null
+  detectedDepIcao: null,
+  detectedDestIcao: null
 }
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────
@@ -61,19 +62,60 @@ window.bzh.getSaved().then((saved) => {
   if (saved) {
     $('input-email').value = saved.email
     $('chk-remember').checked = true
+    $('btn-refresh-auth').classList.remove('hidden')
+  }
+})
+
+$('btn-refresh-auth').addEventListener('click', async () => {
+  const btn = $('btn-refresh-auth')
+  btn.disabled = true
+  btn.textContent = '↺ Connexion en cours…'
+  $('login-error').classList.add('hidden')
+
+  const res = await window.bzh.refresh()
+  btn.disabled = false
+  btn.textContent = '↺ Rafraîchir la connexion'
+
+  if (res.success) {
+    await afterLogin(res.user)
+  } else {
+    $('login-error').textContent = res.error || 'Impossible de se reconnecter'
+    $('login-error').classList.remove('hidden')
   }
 })
 
 // ─── Connexion via site web ───────────────────────────────────────────────
+let _webAuthTimeout = null
+
+function resetWebAuth () {
+  clearTimeout(_webAuthTimeout)
+  $('web-auth-waiting').classList.add('hidden')
+  $('btn-web-auth').disabled = false
+}
+
 $('btn-web-auth').addEventListener('click', () => {
   window.bzh.openWebAuth()
   $('web-auth-waiting').classList.remove('hidden')
   $('btn-web-auth').disabled = true
+  // Annulation automatique après 3 minutes
+  _webAuthTimeout = setTimeout(() => {
+    resetWebAuth()
+    $('login-error').textContent = 'Délai dépassé — réessayez ou connectez-vous via le formulaire.'
+    $('login-error').classList.remove('hidden')
+  }, 180000)
+})
+
+$('btn-web-auth-refresh').addEventListener('click', () => {
+  window.bzh.openWebAuth()
+})
+
+$('btn-web-auth-cancel').addEventListener('click', () => {
+  resetWebAuth()
+  $('login-error').classList.add('hidden')
 })
 
 window.bzh.on('auth:web-error', ({ error }) => {
-  $('web-auth-waiting').classList.add('hidden')
-  $('btn-web-auth').disabled = false
+  resetWebAuth()
   $('login-error').textContent = error || 'Échec de la connexion via le site'
   $('login-error').classList.remove('hidden')
 })
@@ -93,8 +135,7 @@ $('form-login').addEventListener('submit', async (e) => {
   const res = await window.bzh.login(email, password, remember)
 
   if (res.success) {
-    setUserInfo(res.user)
-    showView('main')
+    await afterLogin(res.user)
   } else {
     $('login-error').textContent = res.error || 'Erreur de connexion'
     $('login-error').classList.remove('hidden')
@@ -121,16 +162,56 @@ function setUserInfo (user) {
   if (user.avatar) $('pilot-avatar').src = user.avatar
 }
 
+// Initialisation commune après login (formulaire, web auth, ou token restauré)
+async function afterLogin (user) {
+  setUserInfo(user)
+  showView('main')
+
+  const simType = await window.bzh.getSimType()
+  if (simType) {
+    $('sim-select').value = simType
+    // Tentative de connexion automatique au sim
+    $('btn-connect-sim').disabled = true
+    setSimStatus('connecting', 'Connexion au simulateur…')
+    const res = await window.bzh.connectSim(simType)
+    $('btn-connect-sim').disabled = false
+    if (!res.success) {
+      // Le retry automatique est lancé en arrière-plan dans index.js
+      setSimStatus('error', 'Simulateur non disponible — nouvelle tentative en cours…')
+    }
+  }
+}
+
+// Session expirée — retour au login
+window.bzh.on('auth:session-expired', async () => {
+  await window.bzh.logout()
+  resetFlight()
+  $('login-error').textContent = 'Session expirée, veuillez vous reconnecter.'
+  $('login-error').classList.remove('hidden')
+  showView('login')
+})
+
+// Bouton reconnecter (erreur API sans 401)
+$('btn-api-reconnect').addEventListener('click', async () => {
+  $('btn-api-reconnect').classList.add('hidden')
+  $('api-status-text').textContent = 'Reconnexion…'
+  const user = await window.bzh.getUser()
+  if (!user) {
+    showView('login')
+    return
+  }
+  // Juste rafraîchir le preflight pour vérifier la connexion
+  const pf = await window.bzh.getPreflight()
+  if (pf) {
+    $('api-dot').className = 'api-dot ok'
+    $('api-status-text').textContent = 'En ligne'
+  }
+})
+
 // Restauration auto token (et retour deep link web auth)
 window.bzh.on('auth:restored', async ({ user }) => {
-  $('web-auth-waiting').classList.add('hidden')
-  $('btn-web-auth').disabled = false
-  if (user) {
-    setUserInfo(user)
-    showView('main')
-    const simType = await window.bzh.getSimType()
-    if (simType) $('sim-select').value = simType
-  }
+  resetWebAuth()
+  if (user) await afterLogin(user)
 })
 
 // ─── Pré-vol ──────────────────────────────────────────────────────────────
@@ -361,15 +442,40 @@ window.bzh.on('sim:data', (data) => {
   else vsEl.style.color = 'var(--accent)'
 })
 
+// ─── Détection avion ─────────────────────────────────────────────────────
+window.bzh.on('sim:aircraft', (data) => {
+  const icao = data.matched || data.raw
+  if (!icao) return
+
+  // Remplir le champ avion vol libre s'il est vide
+  const libreField = $('pf-aircraft-libre')
+  if (libreField && !libreField.value) {
+    libreField.value = icao
+  }
+
+  // Remplir le champ PIREP si vide
+  const pirepField = $('pirep-aircraft')
+  if (pirepField && !pirepField.value) {
+    pirepField.value = icao
+  }
+
+  // Afficher une info si pas trouvé dans la base
+  if (data.raw && !data.matched) {
+    console.warn('[Tracker] Avion non reconnu dans la base :', data.raw)
+  }
+})
+
 // ─── Événements de vol ────────────────────────────────────────────────────
 window.bzh.on('sim:flight-start', (data) => {
   state.flightActive = true
   state.flightStartTime = data.time
   state.pirepFuelStart = null
-  state.detectedDepIcao = data.depIcao || null
+  state.detectedDepIcao  = data.depIcao || null
   startTimer()
   showPage('page-vol')
   const pf = getPreflightData()
+  // Sauvegarder la destination du pré-vol pour le PIREP
+  state.detectedDestIcao = pf.destIcao || null
   // Utiliser l'AD détecté si le champ pré-vol est vide
   if (!pf.origIcao && data.depIcao) pf.origIcao = data.depIcao
   window.bzh.startFlight({ ...data, ...pf })
@@ -382,7 +488,7 @@ window.bzh.on('sim:flight-end', (data) => {
 
   const pf = getPreflightData()
   $('pirep-dep').value      = pf.origIcao || state.detectedDepIcao || ''
-  $('pirep-arr').value      = data.arrIcao || pf.destIcao || ''
+  $('pirep-arr').value      = data.arrIcao || pf.destIcao || state.detectedDestIcao || ''
   $('pirep-aircraft').value = pf.aircraft || ''
   $('pirep-duration').value = data.duration
   $('pirep-distance').value = data.distance   ?? ''
@@ -423,6 +529,7 @@ window.bzh.on('api:status', ({ status, message }) => {
   const dot = $('api-dot')
   dot.className = 'api-dot ' + (status || '')
   $('api-status-text').textContent = message || (status === 'ok' ? 'En ligne' : status)
+  $('btn-api-reconnect').classList.toggle('hidden', status === 'ok')
 })
 
 // ─── PIREP Rating ─────────────────────────────────────────────────────────

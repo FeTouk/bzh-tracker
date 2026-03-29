@@ -405,6 +405,7 @@ textarea { resize: none; }
   padding: 8px 0;
 }
 .web-auth-waiting .spinner { width: 14px; height: 14px; flex-shrink: 0; }
+.web-auth-waiting #btn-web-auth-cancel { margin-left: auto; flex-shrink: 0; }
 
 /* ── Spinner ─────────────────────────────────────────────────────────────── */
 .spinner {

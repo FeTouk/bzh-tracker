@@ -1,5 +1,15 @@
 require('dotenv').config()
 
+const fs = require('fs')
+const os = require('os')
+const _logFile = require('path').join(os.homedir(), 'bzh-tracker-debug.log')
+function _log (msg) {
+  const line = `[${new Date().toISOString()}] ${msg}\n`
+  try { fs.appendFileSync(_logFile, line) } catch (_) {}
+  console.log(msg)
+}
+_log('=== BZH Tracker démarrage ===')
+
 // Single instance + deep link handler (Windows)
 const { app: _appEarly } = require('electron')
 const gotTheLock = _appEarly.requestSingleInstanceLock()
@@ -7,6 +17,7 @@ if (!gotTheLock) { _appEarly.quit(); process.exit(0) }
 
 // Intercepter les erreurs SimConnect non-catchées (protocol mismatch, pipe fermé)
 process.on('uncaughtException', (err) => {
+  _log('[CRASH] uncaughtException: ' + err.message + '\n' + err.stack)
   if (err.message && (err.message.includes('protocol') || err.message.includes('SimConnect') || err.message.includes('ENOENT') || err.message.includes('ECONNREFUSED'))) {
     console.warn('[SimConnect] Erreur interceptée (sim non disponible):', err.message)
     if (simBridge) { try { simBridge.disconnect() } catch (_) {} simBridge = null }
@@ -17,10 +28,16 @@ process.on('uncaughtException', (err) => {
 
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell } = require('electron')
 const path = require('path')
+_log('electron chargé')
 const Store = require('electron-store')
-const SimConnectBridge = require('./simconnect')
-const XPlaneBridge = require('./xplane')
+_log('electron-store chargé')
+let SimConnectBridge, XPlaneBridge
+try { SimConnectBridge = require('./simconnect'); _log('simconnect chargé') }
+catch (e) { _log('[WARN] simconnect non disponible: ' + e.message); SimConnectBridge = null }
+try { XPlaneBridge = require('./xplane'); _log('xplane chargé') }
+catch (e) { _log('[WARN] xplane non disponible: ' + e.message); XPlaneBridge = null }
 const ApiClient = require('./api')
+_log('api chargé')
 
 const store = new Store()
 let mainWindow = null
@@ -86,7 +103,8 @@ function handleDeepLink (url) {
   try {
     const parsed = new URL(url)
     console.log('[DeepLink] protocol:', parsed.protocol, '| hostname:', parsed.hostname)
-    if (parsed.protocol === 'bzh-tracker:' && parsed.hostname === 'auth') {
+    if (parsed.protocol === 'bzh-tracker:') {
+      // Accepte bzh-tracker://auth?token=xxx ET bzh-tracker://?token=xxx
       const token = parsed.searchParams.get('token')
       console.log('[DeepLink] token extrait:', token ? token.substring(0, 8) + '...' : 'NULL')
       if (token) _handleTrackerAuthToken(token)
@@ -130,14 +148,19 @@ app.on('second-instance', (_, commandLine) => {
 
 // ─── Initialisation ──────────────────────────────────────────────────────────
 app.whenReady().then(() => {
-  // Sur Windows en dev, il faut passer explicitement le chemin de l'app
-  if (process.platform === 'win32') {
-    app.setAsDefaultProtocolClient('bzh-tracker', process.execPath, [path.resolve(process.argv[1])])
-  } else {
-    app.setAsDefaultProtocolClient('bzh-tracker')
-  }
-  createWindow()
-  createTray()
+  _log('app.whenReady fired')
+  try {
+    // En dev mode (electron .), il faut passer le chemin de l'app en argument
+    // sinon Windows ne sait pas comment relancer le processus avec le deep link
+    if (process.defaultApp && process.argv.length >= 2) {
+      app.setAsDefaultProtocolClient('bzh-tracker', process.execPath, [path.resolve(process.argv[1])])
+    } else {
+      app.setAsDefaultProtocolClient('bzh-tracker')
+    }
+    _log('Protocol bzh-tracker:// enregistré (defaultApp=' + process.defaultApp + ')')
+  } catch (e) { _log('setProtocolClient error: ' + e.message) }
+  try { createWindow(); _log('createWindow OK') } catch (e) { _log('createWindow ERROR: ' + e.message + '\n' + e.stack) }
+  try { createTray();  _log('createTray OK')  } catch (e) { _log('createTray ERROR: '  + e.message) }
 
   apiClient = new ApiClient(store, mainWindow)
 
@@ -186,6 +209,20 @@ ipcMain.handle('auth:login', async (_, { email, password, remember }) => {
 ipcMain.handle('auth:getSaved', () => {
   const email = store.get('auth.email')
   return email ? { email, remember: true } : null
+})
+
+ipcMain.handle('auth:refresh', async () => {
+  const email    = store.get('auth.email')
+  const password = store.get('auth.password')
+  if (!email || !password) return { success: false, error: 'Aucun identifiant sauvegardé' }
+  try {
+    const result = await apiClient.login(email, password)
+    store.set('auth.token', result.token)
+    store.set('auth.user', result.user)
+    return { success: true, user: result.user }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
 })
 
 ipcMain.handle('auth:logout', async () => {
@@ -243,7 +280,7 @@ ipcMain.handle('flight:cancelBooking', async () => {
 })
 
 ipcMain.handle('auth:openWebAuth', () => {
-  const baseUrl = process.env.BZH_WEB_URL || 'https://breizhair.fr'
+  const baseUrl = process.env.BZH_WEB_URL || 'https://test.breizhair.fr'
   shell.openExternal(baseUrl + '/tracker/auth')
 })
 
@@ -305,13 +342,27 @@ async function tryConnectSim (simType) {
     startAutoConnectSim(simType)
   }
   try {
-    if (simType === 'msfs' || simType === 'p3d' || simType === 'fsx') {
+    if ((simType === 'msfs' || simType === 'p3d' || simType === 'fsx') && SimConnectBridge) {
       simBridge = new SimConnectBridge(mainWindow, apiClient, onSimDisco)
-    } else if (simType === 'xplane') {
+    } else if (simType === 'xplane' && XPlaneBridge) {
       simBridge = new XPlaneBridge(mainWindow, apiClient, onSimDisco)
     } else {
       return false
     }
+    // Callback détection avion : match API puis envoi au renderer
+    simBridge.onAircraft = async (rawIcao) => {
+      try {
+        const result = await apiClient.detectAircraft(rawIcao)
+        mainWindow.webContents.send('sim:aircraft', {
+          raw:     rawIcao,
+          matched: result?.icao_code || null,
+          name:    result?.name || null,
+        })
+      } catch (_) {
+        mainWindow.webContents.send('sim:aircraft', { raw: rawIcao, matched: null, name: null })
+      }
+    }
+
     await simBridge.connect()
     stopAutoRetry()
     console.log('[AutoConnect] Simulateur connecté')

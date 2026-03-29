@@ -5,15 +5,21 @@ const {
   SimObjectType
 } = require('node-simconnect')
 
+const { findNearest } = require('./airports')
+
 const SEND_INTERVAL_MS = 5000
-const DEF_ID = 0
-const REQ_ID = 0
+const DEF_ID          = 0
+const REQ_ID          = 0
+const DEF_ID_AIRCRAFT = 1
+const REQ_ID_AIRCRAFT = 1
+const EVT_PAUSE       = 1
 
 class SimConnectBridge {
   constructor (mainWindow, apiClient, onDisconnect) {
     this.mainWindow = mainWindow
     this.apiClient = apiClient
     this.onDisconnect = onDisconnect || null
+    this.onAircraft   = null
     this.handle = null
     this.interval = null
     this.currentData = null
@@ -27,6 +33,14 @@ class SimConnectBridge {
     this.touchdownVs = 0
     this.landingCandidate = false
     this.fuelAtTakeoff = null
+    // Pause tracking
+    this.isPaused = false
+    this.pauseStartTime = null
+    this.totalPauseSeconds = 0
+    // Speed violation tracking (IAS > 250 kts sous FL100)
+    this.speedViolationStartTime = null
+    this.totalSpeedViolationSeconds = 0
+    this._lastDataTime = null
   }
 
   async connect () {
@@ -57,12 +71,41 @@ class SimConnectBridge {
     handle.addToDataDefinition(DEF_ID, 'PLANE BANK DEGREES',             'Degrees',         SimConnectDataType.FLOAT64)
     handle.addToDataDefinition(DEF_ID, 'PLANE PITCH DEGREES',            'Degrees',         SimConnectDataType.FLOAT64)
 
+    // Détection de l'avion (ATC TYPE = code ICAO, ex: "B738")
+    handle.addToDataDefinition(DEF_ID_AIRCRAFT, 'ATC TYPE', null, SimConnectDataType.STRING32)
+    handle.requestDataOnSimObjectType(REQ_ID_AIRCRAFT, DEF_ID_AIRCRAFT, 0, SimObjectType.USER)
+
     // Polling toutes les 5 secondes
     this.interval = setInterval(() => {
       handle.requestDataOnSimObjectType(REQ_ID, DEF_ID, 0, SimObjectType.USER)
     }, SEND_INTERVAL_MS)
 
-    handle.on('simObjectDataByType', (recv) => this._onData(recv))
+    // Abonnement à l'événement de pause
+    handle.subscribeToSystemEvent(EVT_PAUSE, 'Pause')
+    handle.on('event', (recv) => {
+      if (recv.clientEventId === EVT_PAUSE) {
+        this._onPauseChange(recv.data === 1)
+      }
+    })
+
+    handle.on('simObjectDataByType', (recv) => {
+      if (recv.requestID === REQ_ID_AIRCRAFT) {
+        try {
+          // readString32() calls skip(32) which throws when newOffset === limit (ByteBuffer quirk).
+          // readCString(offset) reads the null-terminated string at an absolute position
+          // without advancing the cursor, so it never hits the boundary.
+          const type = recv.data.buffer.readCString(recv.data.getOffset()).string.trim().toUpperCase()
+          if (type) {
+            console.log('[SimConnect] Avion détecté:', type)
+            if (this.onAircraft) this.onAircraft(type)
+          }
+        } catch (e) {
+          console.warn('[SimConnect] Lecture type avion échouée:', e.message)
+        }
+      } else {
+        this._onData(recv)
+      }
+    })
     handle.on('exception',           (e)    => console.error('[SimConnect] Exception:', e))
     handle.on('error',               (e)    => { console.error('[SimConnect] Erreur:', e.message); this._onDisconnect() })
     handle.on('quit',                ()     => this._onDisconnect())
@@ -117,6 +160,14 @@ class SimConnectBridge {
     this.lastVs = data.vs
 
     if (this.flightStarted) {
+      // Violation de vitesse : IAS > 250 kts sous 10 000 ft
+      const now = Date.now()
+      const dt = this._lastDataTime ? (now - this._lastDataTime) / 1000 : 0
+      if (data.ias > 250 && data.altitude < 10000) {
+        this.totalSpeedViolationSeconds += dt
+      }
+      this._lastDataTime = now
+
       if (this.lastPosition) {
         this.totalDistanceNm += _haversineNm(
           this.lastPosition.latitude, this.lastPosition.longitude,
@@ -128,16 +179,36 @@ class SimConnectBridge {
     }
   }
 
-  async _onTakeoff (data) {
+  _onPauseChange (paused) {
+    if (paused && !this.isPaused) {
+      this.isPaused = true
+      this.pauseStartTime = Date.now()
+      console.log('[SimConnect] Simulateur mis en pause')
+      this.mainWindow.webContents.send('sim:paused', true)
+    } else if (!paused && this.isPaused) {
+      this.isPaused = false
+      if (this.pauseStartTime && this.flightStarted) {
+        this.totalPauseSeconds += (Date.now() - this.pauseStartTime) / 1000
+      }
+      this.pauseStartTime = null
+      console.log('[SimConnect] Simulateur repris (pause totale:', Math.round(this.totalPauseSeconds), 's)')
+      this.mainWindow.webContents.send('sim:paused', false)
+    }
+  }
+
+  _onTakeoff (data) {
     this.flightStarted = true
     this.flightStartTime = Date.now()
     this.flightLog = []
     this.totalDistanceNm = 0
     this.lastPosition = data
     this.fuelAtTakeoff = data.fuel
+    this.totalPauseSeconds = 0
+    this.totalSpeedViolationSeconds = 0
+    this._lastDataTime = Date.now()
     console.log('[SimConnect] Décollage détecté')
 
-    const depIcao = await this.apiClient.getNearestAirport(data.latitude, data.longitude)
+    const depIcao = findNearest(data.latitude, data.longitude)
     console.log('[SimConnect] AD départ détecté:', depIcao || 'inconnu')
 
     this.mainWindow.webContents.send('sim:flight-start', {
@@ -148,18 +219,20 @@ class SimConnectBridge {
     })
   }
 
-  async _onLanding (data) {
+  _onLanding (data) {
     this.flightStarted = false
-    const duration   = Math.round((Date.now() - this.flightStartTime) / 1000 / 60)
-    const distance   = Math.round(this.totalDistanceNm)
-    const landingFpm = this.touchdownVs
-    const fuelUsed   = this.fuelAtTakeoff !== null ? Math.round(this.fuelAtTakeoff - data.fuel) : null
+    const duration             = Math.round((Date.now() - this.flightStartTime) / 1000 / 60)
+    const distance             = Math.round(this.totalDistanceNm)
+    const landingFpm           = this.touchdownVs
+    const fuelUsed             = this.fuelAtTakeoff !== null ? Math.round(this.fuelAtTakeoff - data.fuel) : null
+    const pauseSeconds         = Math.round(this.totalPauseSeconds)
+    const speedViolationSeconds = Math.round(this.totalSpeedViolationSeconds)
 
-    const arrIcao = await this.apiClient.getNearestAirport(data.latitude, data.longitude)
-    console.log('[SimConnect] Atterrissage — durée:', duration, 'min | distance:', distance, 'NM | VS:', landingFpm, 'fpm | carburant:', fuelUsed, 'gal | arr:', arrIcao || 'inconnu')
+    const arrIcao = findNearest(data.latitude, data.longitude)
+    console.log('[SimConnect] Atterrissage — durée:', duration, 'min | distance:', distance, 'NM | VS:', landingFpm, 'fpm | carburant:', fuelUsed, 'gal | arr:', arrIcao || 'inconnu | pause:', pauseSeconds, 's | overspeed:', speedViolationSeconds, 's')
 
-    this.mainWindow.webContents.send('sim:flight-end', { duration, distance, landingFpm, fuelUsed, arrIcao })
-    this.apiClient.endFlight({ duration, distance, fuelUsed, landingFpm })
+    this.mainWindow.webContents.send('sim:flight-end', { duration, distance, landingFpm, fuelUsed, arrIcao, pauseSeconds, speedViolationSeconds })
+    this.apiClient.endFlight({ duration, distance, fuelUsed, landingFpm, pauseSeconds, speedViolationSeconds })
   }
 
   _onDisconnect () {

@@ -3,8 +3,8 @@ const crypto = require('crypto')
 const { io } = require('socket.io-client')
 
 // À configurer selon l'URL de breizhairV2
-const API_BASE = process.env.BZH_API_URL || 'https://breizhair.fr/api'
-const WS_URL   = process.env.BZH_WS_URL  || 'https://breizhair.fr'
+const API_BASE = process.env.BZH_API_URL || 'https://test.breizhair.fr/api'
+const WS_URL   = process.env.BZH_WS_URL  || 'https://test.breizhair.fr'
 
 class ApiClient {
   constructor (store, mainWindow) {
@@ -32,8 +32,19 @@ class ApiClient {
     this.http.interceptors.response.use(
       (res) => res,
       (err) => {
-        const msg = err.response?.data?.message || err.message
-        this._sendApiStatus('error', msg)
+        const status = err.response?.status
+        const msg    = err.response?.data?.message || err.message
+
+        if (status === 401) {
+          // Session expirée — notifier le renderer pour retourner au login
+          this._sendApiStatus('error', 'Session expirée')
+          if (this.mainWindow) {
+            this.mainWindow.webContents.send('auth:session-expired')
+          }
+        } else {
+          this._sendApiStatus('error', msg)
+        }
+
         return Promise.reject(new Error(msg))
       }
     )
@@ -86,14 +97,23 @@ class ApiClient {
     return res.data
   }
 
+  async detectAircraft (icao) {
+    try {
+      const res = await this.http.get('/tracker/aircraft/detect', { params: { icao } })
+      return res.data
+    } catch (_) {
+      return null
+    }
+  }
+
   async cancelBooking () {
     const res = await this.http.delete('/tracker/booking')
     return res.data
   }
 
-  async getNearestAirport (lat, lng) {
+  async getNearestAirport (lat, lng, maxNm = 15) {
     try {
-      const res = await this.http.get('/tracker/airport/nearest', { params: { lat, lng } })
+      const res = await this.http.get('/tracker/airport/nearest', { params: { lat, lng, max_nm: maxNm } })
       return res.data.icao || null
     } catch (_) {
       return null
@@ -139,11 +159,13 @@ class ApiClient {
   endFlight (data) {
     // Stocke les données techniques pour submitPirep
     this.pendingFlightData = {
-      flight_hash:   this.currentFlightId,
-      block_minutes: data.duration,
-      distance:      data.distance   || 0,
-      fuel_used:     data.fuelUsed   ?? null,
-      landing_fpm:   data.landingFpm ?? null
+      flight_hash:              this.currentFlightId,
+      block_minutes:            data.duration,
+      distance:                 data.distance             || 0,
+      fuel_used:                data.fuelUsed             ?? null,
+      landing_fpm:              data.landingFpm           ?? null,
+      pause_seconds:            data.pauseSeconds         ?? 0,
+      speed_violation_seconds:  data.speedViolationSeconds ?? 0,
     }
     this._sendApiStatus('ok', 'Atterrissage détecté')
   }

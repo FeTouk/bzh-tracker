@@ -3,7 +3,8 @@ const { contextBridge, ipcRenderer } = require('electron')
 // Expose une API sécurisée au renderer (contextIsolation)
 contextBridge.exposeInMainWorld('bzh', {
   // Auth
-  login: (email, password, remember) => ipcRenderer.invoke('auth:login', { email, password, remember }),
+  login:   (email, password, remember) => ipcRenderer.invoke('auth:login', { email, password, remember }),
+  refresh: () => ipcRenderer.invoke('auth:refresh'),
   openWebAuth: () => ipcRenderer.invoke('auth:openWebAuth'),
   logout: () => ipcRenderer.invoke('auth:logout'),
   getUser: () => ipcRenderer.invoke('auth:getUser'),
@@ -36,8 +37,11 @@ contextBridge.exposeInMainWorld('bzh', {
     const allowed = [
       'auth:restored',
       'auth:web-error',
+      'auth:session-expired',
       'sim:status',
       'sim:data',
+      'sim:paused',
+      'sim:aircraft',
       'sim:flight-start',
       'sim:flight-end',
       'api:status'

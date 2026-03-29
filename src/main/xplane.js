@@ -1,4 +1,6 @@
 const dgram = require('dgram')
+const http  = require('http')
+const { findNearest } = require('./airports')
 
 // Protocole RREF : le tracker s'abonne directement aux datarefs X-Plane
 // Aucune configuration requise dans X-Plane (Settings > Data Output non nécessaire)
@@ -23,6 +25,7 @@ const DATAREFS = [
   { id: 9,  key: 'pitch',    path: 'sim/flightmodel/position/theta'              }, // degrés
   { id: 10, key: 'onground', path: 'sim/flightmodel/failures/onground_any'       }, // 0 ou 1
   { id: 11, key: 'fuel_kg',  path: 'sim/flightmodel/weight/m_fuel_total'         }, // kg
+  { id: 12, key: 'paused',   path: 'sim/time/paused'                             }, // 0 ou 1
 ]
 
 const ID_TO_KEY = {}
@@ -33,6 +36,7 @@ class XPlaneBridge {
     this.mainWindow = mainWindow
     this.apiClient = apiClient
     this.onDisconnect = onDisconnect || null
+    this.onAircraft   = null
     this.socket = null
     this.values = {}
     this.currentData = null
@@ -46,6 +50,14 @@ class XPlaneBridge {
     this.fuelAtTakeoff = null
     this._sendTimer = null
     this._pingTimer = null
+    // Pause tracking
+    this.isPaused = false
+    this.pauseStartTime = null
+    this.totalPauseSeconds = 0
+    // Speed violation tracking (IAS > 250 kts sous FL100)
+    this.speedViolationStartTime = null
+    this.totalSpeedViolationSeconds = 0
+    this._lastDataTime = null
   }
 
   async connect () {
@@ -82,9 +94,40 @@ class XPlaneBridge {
         }, API_SEND_INTERVAL_MS)
 
         this._sendStatus('connected')
+        // Détection de l'avion via X-Plane 12 REST API (silencieux si XP11)
+        this._detectAircraft()
         resolve()
       })
     })
+  }
+
+  _detectAircraft () {
+    const options = {
+      hostname: '127.0.0.1',
+      port: 8086,
+      path: '/api/v2/datarefs?filter%5Bname%5D=sim%2Faircraft%2Fview%2Facf_ICAO',
+      method: 'GET',
+      timeout: 2000,
+    }
+    const req = http.request(options, (res) => {
+      let raw = ''
+      res.on('data', chunk => { raw += chunk })
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(raw)
+          // Format X-Plane 12: { data: [{ name, value }] }
+          const entry = json.data?.[0]
+          const icao  = (entry?.value || '').replace(/\0/g, '').trim().toUpperCase()
+          if (icao) {
+            console.log('[X-Plane] Avion détecté:', icao)
+            if (this.onAircraft) this.onAircraft(icao)
+          }
+        } catch (_) {}
+      })
+    })
+    req.on('error', () => {}) // X-Plane 11 ou REST API désactivé
+    req.on('timeout', () => req.destroy())
+    req.end()
   }
 
   _subscribeAll () {
@@ -174,26 +217,60 @@ class XPlaneBridge {
       this._onLanding(data)
     }
 
-    if (this.flightStarted && this.lastPosition) {
-      this.totalDistanceNm += _haversineNm(
-        this.lastPosition.latitude, this.lastPosition.longitude,
-        data.latitude, data.longitude
-      )
+    if (this.flightStarted) {
+      // Pause via dataref sim/time/paused
+      const paused = (this.values.paused || 0) > 0.5
+      if (paused !== this.isPaused) {
+        if (paused) {
+          this.isPaused = true
+          this.pauseStartTime = Date.now()
+          console.log('[X-Plane] Simulateur mis en pause')
+          this.mainWindow.webContents.send('sim:paused', true)
+        } else {
+          this.isPaused = false
+          if (this.pauseStartTime) {
+            this.totalPauseSeconds += (Date.now() - this.pauseStartTime) / 1000
+          }
+          this.pauseStartTime = null
+          console.log('[X-Plane] Simulateur repris (pause totale:', Math.round(this.totalPauseSeconds), 's)')
+          this.mainWindow.webContents.send('sim:paused', false)
+        }
+      }
+
+      // Violation de vitesse : IAS > 250 kts sous 10 000 ft
+      if (!paused) {
+        const now = Date.now()
+        const dt = this._lastDataTime ? (now - this._lastDataTime) / 1000 : 0
+        if (data.ias > 250 && data.altitude < 10000) {
+          this.totalSpeedViolationSeconds += dt
+        }
+        this._lastDataTime = now
+      }
+
+      if (this.lastPosition) {
+        this.totalDistanceNm += _haversineNm(
+          this.lastPosition.latitude, this.lastPosition.longitude,
+          data.latitude, data.longitude
+        )
+      }
     }
 
     this.isOnGround = data.onGround
     if (this.flightStarted) this.lastPosition = data
   }
 
-  async _onTakeoff (data) {
+  _onTakeoff (data) {
     this.flightStarted = true
     this.flightStartTime = Date.now()
     this.totalDistanceNm = 0
     this.lastPosition = data
     this.fuelAtTakeoff = data.fuel
+    this.totalPauseSeconds = 0
+    this.totalSpeedViolationSeconds = 0
+    this._lastDataTime = Date.now()
     console.log('[X-Plane] Décollage détecté')
 
-    const depIcao = await this.apiClient.getNearestAirport(data.latitude, data.longitude)
+    const depIcao = findNearest(data.latitude, data.longitude)
     console.log('[X-Plane] AD départ:', depIcao || 'inconnu')
 
     this.mainWindow.webContents.send('sim:flight-start', {
@@ -202,18 +279,20 @@ class XPlaneBridge {
     })
   }
 
-  async _onLanding (data) {
+  _onLanding (data) {
     this.flightStarted = false
-    const duration   = Math.round((Date.now() - this.flightStartTime) / 60000)
-    const distance   = Math.round(this.totalDistanceNm)
-    const landingFpm = this.touchdownVs
-    const fuelUsed   = this.fuelAtTakeoff !== null ? Math.round(this.fuelAtTakeoff - data.fuel) : null
+    const duration              = Math.round((Date.now() - this.flightStartTime) / 60000)
+    const distance              = Math.round(this.totalDistanceNm)
+    const landingFpm            = this.touchdownVs
+    const fuelUsed              = this.fuelAtTakeoff !== null ? Math.round(this.fuelAtTakeoff - data.fuel) : null
+    const pauseSeconds          = Math.round(this.totalPauseSeconds)
+    const speedViolationSeconds = Math.round(this.totalSpeedViolationSeconds)
 
-    const arrIcao = await this.apiClient.getNearestAirport(data.latitude, data.longitude)
-    console.log('[X-Plane] Atterrissage — durée:', duration, 'min | dist:', distance, 'NM | VS:', landingFpm, 'fpm | carb:', fuelUsed, 'gal')
+    const arrIcao = findNearest(data.latitude, data.longitude)
+    console.log('[X-Plane] Atterrissage — durée:', duration, 'min | dist:', distance, 'NM | VS:', landingFpm, 'fpm | carb:', fuelUsed, 'gal | pause:', pauseSeconds, 's | overspeed:', speedViolationSeconds, 's')
 
-    this.mainWindow.webContents.send('sim:flight-end', { duration, distance, landingFpm, fuelUsed, arrIcao })
-    this.apiClient.endFlight({ duration, distance, fuelUsed, landingFpm })
+    this.mainWindow.webContents.send('sim:flight-end', { duration, distance, landingFpm, fuelUsed, arrIcao, pauseSeconds, speedViolationSeconds })
+    this.apiClient.endFlight({ duration, distance, fuelUsed, landingFpm, pauseSeconds, speedViolationSeconds })
   }
 
   _onDisconnect () {

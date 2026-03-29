@@ -54,9 +54,14 @@
       <button id="btn-web-auth" class="btn btn--secondary">
         🌐 Se connecter via le site
       </button>
+      <button id="btn-refresh-auth" class="btn btn--ghost hidden">
+        ↺ Rafraîchir la connexion
+      </button>
       <div id="web-auth-waiting" class="web-auth-waiting hidden">
         <span class="spinner"></span>
         <span>En attente de la connexion depuis le navigateur…</span>
+        <button type="button" id="btn-web-auth-refresh" class="btn btn--ghost btn--sm">↺</button>
+        <button type="button" id="btn-web-auth-cancel" class="btn btn--ghost btn--sm">Annuler</button>
       </div>
     </div>
   </div>
@@ -150,6 +155,7 @@
             <div class="api-indicators">
               <div class="api-dot" id="api-dot"></div>
               <span id="api-status-text" class="api-text">—</span>
+              <button class="btn btn--ghost btn--sm hidden" id="btn-api-reconnect">Reconnecter</button>
             </div>
           </div>
         </div>
