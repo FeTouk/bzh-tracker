@@ -51,6 +51,7 @@ class SimConnectBridge {
     this.takeoffSnapshot      = null
     this.touchdownSnapshot    = null
     this._windSamples         = []
+    this._initialDataReceived = false  // évite un faux décollage si connexion en vol
   }
 
   async connect () {
@@ -171,6 +172,13 @@ class SimConnectBridge {
     this.currentData = data
     this.mainWindow.webContents.send('sim:data', data)
 
+    // Premier paquet : calibrer isOnGround sans déclencher de détection
+    if (!this._initialDataReceived) {
+      this._initialDataReceived = true
+      this.isOnGround = onGround
+      return
+    }
+
     // Taxi & fuel tracking (pre-flight)
     if (onGround) {
       if (this.fuelAtGroundStart === null && !this.flightStarted) {
@@ -199,7 +207,7 @@ class SimConnectBridge {
     } else if (!this.isOnGround && data.onGround && this.flightStarted) {
       // Roues au sol — début du candidat atterrissage
       this.landingCandidate = true
-      this.touchdownVs = data.vs
+      this.touchdownVs = Math.abs(data.vs)  // taux de descente positif (convention FSACARS)
       this.touchdownSnapshot = {
         flaps: data.flaps, ias: data.ias, weight: data.totalWeightKg,
         headwind: data.headwind, crosswind: data.crosswind

@@ -75,6 +75,7 @@ class XPlaneBridge {
     this.takeoffSnapshot      = null
     this.touchdownSnapshot    = null
     this._windSamples         = []
+    this._initialDataReceived = false
   }
 
   async connect () {
@@ -188,6 +189,14 @@ class XPlaneBridge {
 
     this.currentData = data
     this.mainWindow.webContents.send('sim:data', data)
+
+    // Premier paquet : calibrer isOnGround sans déclencher de détection
+    if (!this._initialDataReceived) {
+      this._initialDataReceived = true
+      this.isOnGround = data.onGround
+      return
+    }
+
     this._processGroundState(data)
   }
 
@@ -260,7 +269,7 @@ class XPlaneBridge {
       this._onTakeoff(data)
     } else if (!this.isOnGround && data.onGround && this.flightStarted) {
       this.landingCandidate = true
-      this.touchdownVs = data.vs
+      this.touchdownVs = Math.abs(data.vs)  // taux de descente positif (convention FSACARS)
       this.touchdownSnapshot = {
         flaps: data.flaps, ias: data.ias, weight: data.totalWeightKg,
         headwind: data.headwind, crosswind: data.crosswind
