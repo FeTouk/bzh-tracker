@@ -35,11 +35,12 @@ function showPage (pageId) {
 document.querySelectorAll('.nav-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     showPage(btn.dataset.page)
-    if (btn.dataset.page === 'page-preflight' && state.simConnected) loadPreflight()
+    if (btn.dataset.page === 'page-preflight' && !allRoutes.length) loadDispatch()
   })
 })
 
 // ─── Titlebar (frameless) ─────────────────────────────────────────────────
+$('btn-tray').onclick     = () => window.bzh.hide()
 $('btn-minimize').onclick = () => window.bzh.minimize()
 $('btn-close').onclick    = () => window.bzh.close()
 
@@ -166,6 +167,8 @@ function setUserInfo (user) {
 async function afterLogin (user) {
   setUserInfo(user)
   showView('main')
+  loadDispatch()
+  loadLogbook()
 
   const simType = await window.bzh.getSimType()
   if (simType) {
@@ -214,92 +217,116 @@ window.bzh.on('auth:restored', async ({ user }) => {
   if (user) await afterLogin(user)
 })
 
-// ─── Pré-vol ──────────────────────────────────────────────────────────────
-let preflightRoutes = []
+// ─── Dispatch ─────────────────────────────────────────────────────────────
+let allRoutes        = []
+let activeBooking    = null   // { route_id, flight_number, orig_icao, dest_icao, aircraft }
+let activeTypeFilter = ''     // '' | 'Local' | 'Régional' | 'Moyen courrier' | 'Long courrier'
 
 function loadPreflight () {
-  window.bzh.getPreflight().then((data) => {
-    if (!data) return
+  loadDispatch()
+}
 
-    $('pf-orig-display').value = data.current_airport || '—'
-    preflightRoutes = data.routes || []
+async function loadDispatch () {
+  const data = await window.bzh.getLines()
+  if (!data) return
 
-    const sel = $('pf-route-select')
-    sel.innerHTML = preflightRoutes.length
-      ? '<option value="">— Choisir une ligne —</option>' +
-        preflightRoutes.map(r =>
-          `<option value="${r.id}">${r.departure_icao} → ${r.arrival_icao} · ${r.aircraft_type} [${r.line_type}]</option>`
-        ).join('')
-      : '<option value="">Aucune ligne depuis cet aéroport</option>'
+  allRoutes     = data.routes || []
+  activeBooking = data.active_booking || null
+  const origin  = data.current_airport || ''
+  $('dispatch-origin').textContent = origin ? `— ${origin}` : ''
 
-    // Pré-sélectionner la réservation active si elle existe
-    if (data.active_booking) {
-      const b = data.active_booking
-      const match = preflightRoutes.find(r =>
-        r.arrival_icao === b.dest_icao && r.aircraft_type === b.aircraft
-      )
-      if (match) sel.value = match.id
-      $('pf-flight-number').value = b.flight_number || ''
-      updateRouteDetails(match || null)
-      setBookingActive(true)
-    }
+  renderActiveBooking()
+  renderRoutesList($('dispatch-filter').value)
+}
+
+function renderActiveBooking () {
+  const card = $('card-active-booking')
+  if (!activeBooking) {
+    card.classList.add('hidden')
+    $('pf-flight-number').value = ''
+    return
+  }
+  card.classList.remove('hidden')
+  $('ab-dep').textContent          = activeBooking.orig_icao  || '—'
+  $('ab-arr').textContent          = activeBooking.dest_icao  || '—'
+  $('ab-aircraft').textContent     = activeBooking.aircraft   || '—'
+  $('ab-flight-number').textContent = activeBooking.flight_number || '—'
+  $('pf-flight-number').value      = activeBooking.flight_number || ''
+  // Stocker la route réservée pour getPreflightData
+  $('pf-route-select').value = activeBooking.route_id || ''
+}
+
+function renderRoutesList (filter) {
+  const list  = $('dispatch-lines-list')
+  const q     = (filter || '').toUpperCase().trim()
+  const shown = allRoutes.filter(r => {
+    if (activeTypeFilter && r.aircraft_type !== activeTypeFilter) return false
+    if (q && !r.departure_icao.includes(q) && !r.arrival_icao.includes(q) &&
+        !r.aircraft_type.toUpperCase().includes(q)) return false
+    return true
+  })
+
+  if (!shown.length) {
+    list.innerHTML = `<div class="dispatch-empty">${allRoutes.length ? 'Aucune ligne correspondante' : 'Aucune ligne disponible'}</div>`
+    return
+  }
+
+  list.innerHTML = shown.map(r => {
+    const isBooked = activeBooking && activeBooking.route_id == r.id
+    return `<div class="dispatch-route${isBooked ? ' booked' : ''}" data-id="${r.id}">
+      <div class="dispatch-route-airports">
+        <span class="dispatch-icao">${r.departure_icao}</span>
+        <span class="dispatch-arrow">→</span>
+        <span class="dispatch-icao">${r.arrival_icao}</span>
+      </div>
+      <div class="dispatch-route-meta">
+        <span class="dispatch-aircraft">${r.aircraft_type || ''}</span>
+        <span class="dispatch-type">${r.flight_regime || ''}</span>
+      </div>
+      ${isBooked
+        ? `<span class="btn btn--ghost btn--sm dispatch-book-btn" style="color:var(--success)">✓ Réservé</span>`
+        : `<button class="btn btn--primary btn--sm dispatch-book-btn" data-book="${r.id}">Réserver</button>`
+      }
+    </div>`
+  }).join('')
+
+  // Boutons Réserver
+  list.querySelectorAll('[data-book]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation()
+      const routeId = btn.dataset.book
+      btn.disabled = true
+      btn.textContent = '…'
+      const res = await window.bzh.createBooking(routeId)
+      if (res.success) {
+        activeBooking = {
+          route_id:      routeId,
+          flight_number: res.flight_number,
+          orig_icao:     allRoutes.find(r => r.id == routeId)?.departure_icao,
+          dest_icao:     allRoutes.find(r => r.id == routeId)?.arrival_icao,
+          aircraft:      allRoutes.find(r => r.id == routeId)?.aircraft_type,
+        }
+        renderActiveBooking()
+        renderRoutesList($('dispatch-filter').value)
+      } else {
+        btn.disabled = false
+        btn.textContent = 'Réserver'
+        $('pf-booking-status').className = 'pf-booking-err'
+        $('pf-booking-status').textContent = res.error || 'Erreur'
+        $('pf-booking-status').classList.remove('hidden')
+      }
+    })
   })
 }
 
-$('pf-route-select').addEventListener('change', () => {
-  const route = preflightRoutes.find(r => r.id == $('pf-route-select').value)
-  updateRouteDetails(route || null)
-})
+$('dispatch-filter').addEventListener('input', () => renderRoutesList($('dispatch-filter').value))
 
-function setBookingActive (active) {
-  $('btn-create-booking').classList.toggle('hidden', active)
-  $('btn-cancel-booking').classList.toggle('hidden', !active)
-}
-
-function updateRouteDetails (route) {
-  $('pf-booking-status').className = 'hidden'
-  $('pf-booking-status').textContent = ''
-
-  if (route) {
-    $('pf-dest-display').textContent     = route.arrival_icao
-    $('pf-aircraft-display').textContent = route.aircraft_type
-    $('pf-route-details').style.display  = 'grid'
-
-    if (route.ifps_route) {
-      $('pf-ifps-text').textContent = route.ifps_route
-      $('pf-route-string').classList.remove('hidden')
-    } else {
-      $('pf-route-string').classList.add('hidden')
-    }
-
-    $('pf-actions').classList.remove('hidden')
-  } else {
-    $('pf-route-details').style.display = 'none'
-    $('pf-route-string').classList.add('hidden')
-    $('pf-actions').classList.add('hidden')
-  }
-}
-
-// Créer un booking
-$('btn-create-booking').addEventListener('click', async () => {
-  const route = preflightRoutes.find(r => r.id == $('pf-route-select').value)
-  if (!route) return
-
-  $('btn-create-booking').disabled = true
-  const res = await window.bzh.createBooking(route.id)
-  $('btn-create-booking').disabled = false
-
-  const statusEl = $('pf-booking-status')
-  statusEl.classList.remove('hidden')
-  if (res.success) {
-    $('pf-flight-number').value = res.flight_number
-    statusEl.className = 'pf-booking-ok'
-    statusEl.textContent = `Réservation créée : ${res.flight_number}`
-    setBookingActive(true)
-  } else {
-    statusEl.className = 'pf-booking-err'
-    statusEl.textContent = res.error || 'Erreur lors de la réservation'
-  }
+document.querySelectorAll('.dispatch-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    activeTypeFilter = tab.dataset.type
+    document.querySelectorAll('.dispatch-tab').forEach(t => t.classList.toggle('active', t === tab))
+    renderRoutesList($('dispatch-filter').value)
+  })
 })
 
 // Annuler un booking
@@ -308,22 +335,21 @@ $('btn-cancel-booking').addEventListener('click', async () => {
   const res = await window.bzh.cancelBooking()
   $('btn-cancel-booking').disabled = false
 
-  const statusEl = $('pf-booking-status')
-  statusEl.classList.remove('hidden')
   if (res.success) {
-    $('pf-flight-number').value = ''
-    statusEl.className = 'pf-booking-err'
-    statusEl.textContent = 'Réservation annulée'
-    setBookingActive(false)
+    activeBooking = null
+    renderActiveBooking()
+    renderRoutesList($('dispatch-filter').value)
   } else {
-    statusEl.className = 'pf-booking-err'
-    statusEl.textContent = res.error || 'Erreur lors de l\'annulation'
+    $('pf-booking-status').className = 'pf-booking-err'
+    $('pf-booking-status').textContent = res.error || 'Erreur lors de l\'annulation'
+    $('pf-booking-status').classList.remove('hidden')
   }
 })
 
-// Ouvrir SimBrief
+// Ouvrir SimBrief depuis la réservation active
 $('btn-simbrief').addEventListener('click', () => {
-  const route = preflightRoutes.find(r => r.id == $('pf-route-select').value)
+  if (!activeBooking) return
+  const route = allRoutes.find(r => r.id == activeBooking.route_id)
   if (!route) return
   const user = window._bzhUser || {}
   window.bzh.openSimBrief({
@@ -334,10 +360,8 @@ $('btn-simbrief').addEventListener('click', () => {
   })
 })
 
-// Retourne uniquement aircraft + flightNumber depuis le pré-vol ligne
-// Les AD réels (dep/arr) viennent du simulateur via GPS, pas du formulaire
 function getPreflightData () {
-  const route = preflightRoutes.find(r => r.id == $('pf-route-select').value)
+  const route = allRoutes.find(r => r.id == $('pf-route-select').value)
   return {
     intendedDest: route ? route.arrival_icao : '',
     aircraft:     route ? route.aircraft_type : '',
@@ -374,8 +398,7 @@ window.bzh.on('sim:status', ({ status }) => {
     $('sim-badge').textContent = 'CONNECTÉ'
     $('sim-badge').className = 'badge badge--connected'
     $('sim-select').disabled = true
-    $('card-preflight').classList.remove('hidden')
-    loadPreflight()
+    updateFlightButtons()
   } else {
     state.simConnected = false
     setSimStatus('disconnected', 'Déconnecté')
@@ -384,7 +407,7 @@ window.bzh.on('sim:status', ({ status }) => {
     $('sim-badge').textContent = 'DÉCONNECTÉ'
     $('sim-badge').className = 'badge'
     $('sim-select').disabled = false
-    $('card-preflight').classList.add('hidden')
+    updateFlightButtons()
   }
 })
 
@@ -445,6 +468,45 @@ window.bzh.on('sim:aircraft', (data) => {
   }
 })
 
+// ─── Boutons start/stop manuel ───────────────────────────────────────────
+function updateFlightButtons () {
+  const canStart = state.simConnected && !state.flightActive
+  const canStop  = state.simConnected &&  state.flightActive
+  $('btn-flight-start').disabled = !canStart
+  $('btn-flight-start').classList.toggle('hidden', state.flightActive)
+  $('btn-flight-stop').classList.toggle('hidden', !state.flightActive)
+}
+
+$('btn-flight-start').addEventListener('click', async () => {
+  const btn = $('btn-flight-start')
+  btn.disabled = true
+  btn.textContent = 'Démarrage…'
+  const res = await window.bzh.manualStartFlight()
+  if (res && res.error) {
+    btn.disabled = false
+    btn.textContent = 'Démarrer le vol'
+    alert(res.error)
+  }
+})
+
+$('btn-flight-stop').addEventListener('click', async () => {
+  if (!confirm('Terminer le vol et générer le PIREP ?')) return
+  const btn = $('btn-flight-stop')
+  btn.disabled = true
+  const res = await window.bzh.manualStopFlight()
+  if (res && res.error) {
+    btn.disabled = false
+    alert(res.error)
+  }
+})
+
+// Notification touchdown pendant le vol (retour visuel)
+window.bzh.on('sim:touchdown', (data) => {
+  if (state.flightActive) {
+    $('flight-phase').textContent = `Touchdown ${data.fpm} fpm`
+  }
+})
+
 // ─── Événements de vol ────────────────────────────────────────────────────
 window.bzh.on('sim:flight-start', (data) => {
   state.flightActive    = true
@@ -454,6 +516,7 @@ window.bzh.on('sim:flight-start', (data) => {
   state.detectedDepIcao = data.depIcao || null
   if (data.depIcao) $('pf-orig-display').value = data.depIcao
   startTimer()
+  updateFlightButtons()
   showPage('page-vol')
 
   const pf = getPreflightData()
@@ -471,12 +534,14 @@ window.bzh.on('sim:flight-start', (data) => {
 
 window.bzh.on('sim:flight-end', (data) => {
   state.flightActive    = false
-  state.detectedDestIcao = data.arrIcao || null
   stopTimer()
+  updateFlightButtons()
   state.pirepDuration = data.duration
 
   const pf = getPreflightData()
-  // AD réels GPS uniquement — les champs sont en lecture seule dans le PIREP
+  // Destination : GPS si trouvé, sinon destination prévue de la ligne (fallback)
+  state.detectedDestIcao = data.arrIcao || pf.intendedDest || null
+
   $('pirep-dep').value      = state.detectedDepIcao  || ''
   $('pirep-arr').value      = state.detectedDestIcao || ''
   $('pirep-aircraft').value = pf.aircraft || ''
@@ -570,6 +635,20 @@ $('form-pirep').addEventListener('submit', async (e) => {
   setPirepLoading(false)
 
   if (res.success) {
+    // Enregistrer dans le logbook local
+    await window.bzh.logbookAppend({
+      date:        new Date().toISOString().slice(0, 10),
+      flightNumber: $('pf-flight-number').value.trim() || '',
+      depIcao,
+      arrIcao,
+      aircraft,
+      durationMin:  $('pirep-duration').value || '',
+      distanceNm:   $('pirep-distance').value || '',
+      landingFpm:   $('pirep-fpm').value      || '',
+      fuelGal:      $('pirep-fuel').value     || '',
+      remarks:      $('pirep-remarks').value.trim(),
+    })
+    loadLogbook()
     resetPirepForm()
     $('pirep-badge').classList.add('hidden')
     $('nav-pirep-badge').classList.add('hidden')
@@ -599,6 +678,50 @@ function resetPirepForm () {
   $('pirep-remarks').value = ''
   state.pirepRating = 5
   document.querySelectorAll('#pirep-rating span').forEach((s) => s.classList.add('active'))
+}
+
+// ─── Logbook ──────────────────────────────────────────────────────────────
+async function loadLogbook () {
+  const data = await window.bzh.logbookRead()
+  renderLogbook(data.entries || [])
+}
+
+function fmtDuration (min) {
+  if (!min) return '—'
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  return h > 0 ? `${h}h${String(m).padStart(2, '0')}` : `${m}min`
+}
+
+function renderLogbook (entries) {
+  const list = $('logbook-list')
+  $('logbook-total').textContent = entries.length ? `${entries.length} vol${entries.length > 1 ? 's' : ''}` : ''
+
+  if (!entries.length) {
+    list.innerHTML = '<div class="logbook-empty">Aucun vol enregistré</div>'
+    return
+  }
+
+  list.innerHTML = entries.map(e => `
+    <div class="logbook-entry">
+      <div class="logbook-entry-header">
+        <div class="logbook-route">
+          <span class="logbook-icao">${e.depIcao || '?'}</span>
+          <span class="logbook-arrow">→</span>
+          <span class="logbook-icao">${e.arrIcao || '?'}</span>
+        </div>
+        <span class="logbook-aircraft">${e.aircraft || '—'}</span>
+        ${e.flightNumber ? `<span class="logbook-fnum">${e.flightNumber}</span>` : ''}
+      </div>
+      <div class="logbook-entry-stats">
+        <span>${fmtDuration(parseInt(e.durationMin))}</span>
+        ${e.distanceNm ? `<span><span class="logbook-stat-val">${e.distanceNm}</span> NM</span>` : ''}
+        ${e.landingFpm ? `<span><span class="logbook-stat-val">${e.landingFpm}</span> fpm</span>` : ''}
+        ${e.fuelGal    ? `<span><span class="logbook-stat-val">${e.fuelGal}</span> gal</span>` : ''}
+      </div>
+      <div class="logbook-date">${e.date || ''}</div>
+    </div>
+  `).join('')
 }
 
 function resetFlight () {

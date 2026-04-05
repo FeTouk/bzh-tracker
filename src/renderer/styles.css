@@ -158,6 +158,21 @@ html, body {
   border: 2px solid var(--bg-card);
 }
 
+/* ── Logbook ─────────────────────────────────────────────────────────────── */
+.logbook-total { font-size: 11px; color: var(--text-muted); }
+.logbook-list { display: flex; flex-direction: column; gap: 6px; max-height: 420px; overflow-y: auto; }
+.logbook-empty { text-align: center; color: var(--text-muted); font-size: 12px; padding: 24px 0; }
+.logbook-entry { background: var(--bg-input); border-radius: 8px; padding: 9px 11px; display: flex; flex-direction: column; gap: 3px; }
+.logbook-entry-header { display: flex; align-items: center; gap: 8px; }
+.logbook-route { display: flex; align-items: center; gap: 6px; flex: 1; }
+.logbook-icao { font-size: 13px; font-weight: 700; color: var(--accent); letter-spacing: 1px; }
+.logbook-arrow { color: var(--text-muted); font-size: 11px; }
+.logbook-fnum { font-size: 11px; color: var(--text-muted); margin-left: auto; }
+.logbook-aircraft { font-size: 11px; font-weight: 600; color: var(--text); }
+.logbook-entry-stats { display: flex; gap: 10px; font-size: 11px; color: var(--text-muted); }
+.logbook-stat-val { color: var(--text); font-weight: 600; }
+.logbook-date { font-size: 10px; color: var(--text-muted); margin-top: 1px; }
+
 /* ── PIREP waiting ───────────────────────────────────────────────────────── */
 .pirep-waiting {
   display: flex;
@@ -227,25 +242,42 @@ html, body {
   color: var(--text-muted);
 }
 
-/* ── Pré-vol ─────────────────────────────────────────────────────────────── */
-.preflight-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.field--full { grid-column: 1 / -1; }
+/* ── Dispatch ─────────────────────────────────────────────────────────────── */
 .input--icao { text-transform: uppercase; letter-spacing: 2px; font-weight: 600; }
 .optional { color: var(--text-muted); font-weight: 400; font-size: 10px; }
-.pf-mode-toggle { display: flex; gap: 2px; background: var(--bg-input); border-radius: 6px; padding: 2px; }
-.pf-mode-btn { border: none; background: transparent; color: var(--text-muted); font-size: 11px; padding: 3px 10px; border-radius: 4px; cursor: pointer; transition: all 0.15s; }
-.pf-mode-btn.active { background: var(--accent); color: #fff; }
-.pf-info-block { background: var(--bg-input); border-radius: 6px; padding: 8px 10px; }
-.pf-info-label { display: block; font-size: 10px; color: var(--text-muted); margin-bottom: 2px; }
-.pf-info-value { font-size: 14px; font-weight: 700; color: var(--accent); letter-spacing: 1px; }
-.pf-route-string { background: var(--bg-input); border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
-input[readonly] { opacity: 0.6; cursor: default; }
-input[readonly]:focus { border-color: var(--border); box-shadow: none; }
-.pf-route-string code { font-family: var(--font-mono); font-size: 11px; color: var(--text); line-height: 1.5; word-break: break-all; }
-.pf-actions { display: flex; gap: 8px; }
+.pf-actions { display: flex; gap: 8px; margin-top: 8px; }
 .pf-actions .btn { flex: 1; }
 .pf-booking-ok { font-size: 12px; color: var(--success); text-align: center; padding: 6px; }
 .pf-booking-err { font-size: 12px; color: var(--danger); text-align: center; padding: 6px; }
+input[readonly] { opacity: 0.6; cursor: default; }
+input[readonly]:focus { border-color: var(--border); box-shadow: none; }
+
+/* Réservation active */
+.active-booking-info { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.active-booking-route { display: flex; align-items: center; gap: 10px; }
+.active-booking-icao { font-size: 20px; font-weight: 700; color: var(--accent); letter-spacing: 2px; }
+.active-booking-arrow { color: var(--text-muted); font-size: 16px; }
+.active-booking-meta { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-muted); }
+.active-booking-fnum { font-weight: 600; color: var(--text); }
+
+/* Liste des lignes */
+.dispatch-filter { flex: 1; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 12px; color: var(--text); outline: none; max-width: 90px; }
+.dispatch-origin { font-size: 11px; font-weight: 400; color: var(--accent); letter-spacing: 1px; }
+.dispatch-tabs { display: flex; gap: 4px; margin: 6px 0 2px; flex-wrap: wrap; }
+.dispatch-tab { border: none; background: var(--bg-input); color: var(--text-muted); font-size: 11px; padding: 3px 9px; border-radius: 4px; cursor: pointer; transition: all 0.15s; }
+.dispatch-tab.active { background: var(--accent); color: #fff; }
+.dispatch-lines-list { display: flex; flex-direction: column; gap: 6px; max-height: 340px; overflow-y: auto; margin-top: 4px; }
+.dispatch-empty { text-align: center; color: var(--text-muted); font-size: 12px; padding: 20px 0; }
+.dispatch-route { display: flex; align-items: center; gap: 8px; background: var(--bg-input); border-radius: 8px; padding: 8px 10px; cursor: pointer; border: 1px solid transparent; transition: border-color 0.15s; }
+.dispatch-route:hover { border-color: var(--accent); }
+.dispatch-route.booked { border-color: var(--success); }
+.dispatch-route-airports { display: flex; align-items: center; gap: 6px; flex: 1; }
+.dispatch-icao { font-size: 13px; font-weight: 700; color: var(--accent); letter-spacing: 1px; }
+.dispatch-arrow { color: var(--text-muted); font-size: 11px; }
+.dispatch-route-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+.dispatch-aircraft { font-size: 11px; color: var(--text); font-weight: 600; }
+.dispatch-type { font-size: 10px; color: var(--text-muted); text-transform: uppercase; }
+.dispatch-book-btn { font-size: 11px; padding: 3px 10px; white-space: nowrap; }
 
 /* ── Pilot header ────────────────────────────────────────────────────────── */
 .pilot-info { display: flex; align-items: center; gap: 10px; }
@@ -315,6 +347,12 @@ input[readonly]:focus { border-color: var(--border); box-shadow: none; }
 }
 .phase-label { color: var(--text-muted); }
 .phase-value { color: var(--text); font-weight: 600; }
+
+.flight-controls {
+  margin-top: 12px;
+  display: flex; gap: 8px;
+}
+.flight-controls .btn { flex: 1; }
 
 /* ── API status ──────────────────────────────────────────────────────────── */
 .api-indicators { display: flex; align-items: center; gap: 6px; }

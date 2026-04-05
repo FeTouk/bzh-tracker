@@ -53,7 +53,8 @@ class XPlaneBridge {
     this.totalDistanceNm = 0
     this.lastPosition = null
     this.touchdownVs = 0
-    this.landingCandidate = false
+    this.lastVs = 0
+    this._touchdownCaptured = false
     this.fuelAtTakeoff = null
     this._sendTimer = null
     this._pingTimer = null
@@ -264,24 +265,25 @@ class XPlaneBridge {
       this._windSamples.push({ dir: data.windDir, speed: data.windSpeed })
     }
 
-    if (this.isOnGround && !data.onGround && data.ias > 40) {
-      this.landingCandidate = false
-      this._onTakeoff(data)
-    } else if (!this.isOnGround && data.onGround && this.flightStarted) {
-      this.landingCandidate = true
-      this.touchdownVs = Math.abs(data.vs)  // taux de descente positif (convention FSACARS)
+    // Capture VS au touchdown — le vol démarre/s'arrête manuellement
+    if (!this.isOnGround && data.onGround && this.flightStarted) {
+      this._touchdownCaptured = true
+      this.touchdownVs = Math.max(Math.abs(this.lastVs), Math.abs(data.vs))
       this.touchdownSnapshot = {
         flaps: data.flaps, ias: data.ias, weight: data.totalWeightKg,
         headwind: data.headwind, crosswind: data.crosswind
       }
-      console.log('[X-Plane] Touchdown, VS:', data.vs, 'fpm')
-    } else if (this.landingCandidate && !data.onGround) {
-      this.landingCandidate = false
-      console.log('[X-Plane] Remise des gaz détectée')
-    } else if (this.landingCandidate && data.onGround && data.gs < 10) {
-      this.landingCandidate = false
-      this._onLanding(data)
+      console.log('[X-Plane] Touchdown, VS:', this.touchdownVs, 'fpm (lastVs:', this.lastVs, ', onGroundVs:', data.vs, ')')
+      this.mainWindow.webContents.send('sim:touchdown', { fpm: this.touchdownVs })
+    } else if (this.flightStarted && this.isOnGround && !data.onGround) {
+      // Remise des gaz après touchdown
+      this._touchdownCaptured = false
+      this.touchdownVs = 0
+      this.touchdownSnapshot = null
+      console.log('[X-Plane] Remise des gaz détectée, vol continue')
     }
+
+    this.lastVs = data.vs
 
     if (this.flightStarted) {
       // Pause via dataref sim/time/paused
@@ -335,6 +337,9 @@ class XPlaneBridge {
     this.totalSpeedViolationSeconds = 0
     this._lastDataTime = Date.now()
     this._landingCompleted = false
+    this._touchdownCaptured = false
+    this.touchdownVs = 0
+    this.touchdownSnapshot = null
     this._windSamples = []
     // Taxi fuel (X-Plane fuel en kg)
     const taxiFuelKg = this.fuelAtGroundStart !== null ? Math.max(0, Math.round(this.fuelAtGroundStart - data.fuelKg)) : null
@@ -407,6 +412,23 @@ class XPlaneBridge {
       avgWindDir, avgWindSpeed,
       fsVersion: 'XP',
     })
+  }
+
+  manualStart () {
+    if (!this.currentData) return { error: 'Pas de données simulateur disponibles' }
+    if (this.flightStarted) return { error: 'Vol déjà en cours' }
+    this._onTakeoff(this.currentData)
+    return { success: true }
+  }
+
+  manualStop () {
+    if (!this.flightStarted) return { error: 'Aucun vol en cours' }
+    const data = this.currentData || {}
+    if (!this._touchdownCaptured) {
+      this.touchdownVs = Math.abs(data.vs || this.lastVs || 0)
+    }
+    this._onLanding(data)
+    return { success: true }
   }
 
   _onDisconnect () {

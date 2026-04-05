@@ -15,6 +15,7 @@
     </div>
     <div class="titlebar-controls">
       <button class="tb-btn" id="btn-theme" title="Mode jour/nuit">☀</button>
+      <button class="tb-btn" id="btn-tray" title="Réduire dans la barre système">&#x2302;</button>
       <button class="tb-btn" id="btn-minimize" title="Réduire">&#x2013;</button>
       <button class="tb-btn tb-btn--close" id="btn-close" title="Fermer">&#x2715;</button>
     </div>
@@ -147,6 +148,10 @@
             <span class="phase-label">PHASE :</span>
             <span id="flight-phase" class="phase-value">Sol</span>
           </div>
+          <div class="flight-controls">
+            <button class="btn btn--primary" id="btn-flight-start" disabled>Démarrer le vol</button>
+            <button class="btn btn--danger hidden" id="btn-flight-stop">Terminer le vol</button>
+          </div>
         </div>
 
         <div class="card card--compact">
@@ -162,53 +167,71 @@
 
       </div><!-- /page-vol -->
 
-      <!-- PAGE 2 : PRÉ-VOL ───────────────────────────────────────────── -->
+      <!-- PAGE 2 : DISPATCH ──────────────────────────────────────────── -->
       <div class="page" id="page-preflight">
 
-        <div class="card" id="card-preflight">
+        <!-- Réservation active -->
+        <div class="card hidden" id="card-active-booking">
           <div class="card-header">
-            <span class="card-title">PRÉ-VOL</span>
+            <span class="card-title">RÉSERVATION ACTIVE</span>
+            <button class="btn btn--danger btn--sm" id="btn-cancel-booking">Annuler</button>
           </div>
-
-          <div class="field">
-            <label>Position actuelle (AD détecté)</label>
-            <input type="text" id="pf-orig-display" class="input--icao" readonly />
-          </div>
-          <div class="field">
-            <label>Ligne disponible</label>
-            <select id="pf-route-select" class="select">
-              <option value="">— Connectez le simulateur d'abord —</option>
-            </select>
-          </div>
-          <div class="preflight-grid" id="pf-route-details" style="display:none">
-            <div class="pf-info-block">
-              <span class="pf-info-label">Arrivée prévue</span>
-              <span class="pf-info-value" id="pf-dest-display">—</span>
+          <div class="active-booking-info">
+            <div class="active-booking-route">
+              <span class="active-booking-icao" id="ab-dep">—</span>
+              <span class="active-booking-arrow">→</span>
+              <span class="active-booking-icao" id="ab-arr">—</span>
             </div>
-            <div class="pf-info-block">
-              <span class="pf-info-label">Appareil</span>
-              <span class="pf-info-value" id="pf-aircraft-display">—</span>
+            <div class="active-booking-meta">
+              <span id="ab-aircraft">—</span>
+              <span id="ab-flight-number" class="active-booking-fnum">—</span>
             </div>
           </div>
-          <div class="field">
-            <label>N° de vol <span class="optional">(généré par la réservation)</span></label>
-            <input type="text" id="pf-flight-number" placeholder="— Réserver pour générer —" readonly />
-          </div>
-          <div id="pf-route-string" class="pf-route-string hidden">
-            <span class="pf-info-label">Route IFPS</span>
-            <code id="pf-ifps-text"></code>
-          </div>
-          <div class="pf-actions hidden" id="pf-actions">
+          <div class="pf-actions">
             <button class="btn btn--ghost btn--sm" id="btn-simbrief">✈ SimBrief</button>
-            <button class="btn btn--primary btn--sm" id="btn-create-booking">Réserver</button>
-            <button class="btn btn--danger btn--sm hidden" id="btn-cancel-booking">Annuler</button>
           </div>
           <div id="pf-booking-status" class="hidden"></div>
         </div>
 
+        <!-- Liste des lignes -->
+        <div class="card" id="card-lines">
+          <div class="card-header">
+            <span class="card-title">LIGNES <span id="dispatch-origin" class="dispatch-origin"></span></span>
+            <input type="text" id="dispatch-filter" class="dispatch-filter" placeholder="ICAO…" />
+          </div>
+          <div class="dispatch-tabs">
+            <button class="dispatch-tab active" data-type="">Tous</button>
+            <button class="dispatch-tab" data-type="Local">Local</button>
+            <button class="dispatch-tab" data-type="Régional">Régional</button>
+            <button class="dispatch-tab" data-type="Moyen courrier">Moyen</button>
+            <button class="dispatch-tab" data-type="Long courrier">Long</button>
+          </div>
+          <div id="dispatch-lines-list" class="dispatch-lines-list">
+            <div class="dispatch-empty">Connectez-vous pour voir les lignes</div>
+          </div>
+        </div>
+
+        <!-- Champs cachés pour compatibilité getPreflightData() -->
+        <input type="hidden" id="pf-orig-display" />
+        <input type="hidden" id="pf-route-select" />
+        <input type="hidden" id="pf-flight-number" />
+
       </div><!-- /page-preflight -->
 
-      <!-- PAGE 3 : PIREP ─────────────────────────────────────────────── -->
+      <!-- PAGE 3 : HISTORIQUE ────────────────────────────────────────── -->
+      <div class="page" id="page-logbook">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">LOGBOOK</span>
+            <span id="logbook-total" class="logbook-total"></span>
+          </div>
+          <div id="logbook-list" class="logbook-list">
+            <div class="logbook-empty">Aucun vol enregistré</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PAGE 4 : PIREP ─────────────────────────────────────────────── -->
       <div class="page" id="page-pirep">
 
         <div class="card card--pirep" id="card-pirep">
@@ -284,9 +307,13 @@
         <span class="nav-icon">✈</span>
         <span class="nav-label">Vol</span>
       </button>
-      <button class="nav-btn" data-page="page-preflight">
+      <button class="nav-btn" id="nav-btn-preflight" data-page="page-preflight">
         <span class="nav-icon">📋</span>
-        <span class="nav-label">Pré-vol</span>
+        <span class="nav-label">Dispatch</span>
+      </button>
+      <button class="nav-btn" data-page="page-logbook">
+        <span class="nav-icon">📖</span>
+        <span class="nav-label">Historique</span>
       </button>
       <button class="nav-btn" data-page="page-pirep">
         <span class="nav-icon">📝</span>

@@ -19,13 +19,21 @@ contextBridge.exposeInMainWorld('bzh', {
 
   // Vol
   getPreflight:   () => ipcRenderer.invoke('flight:preflight'),
+  getLines:       () => ipcRenderer.invoke('flight:lines'),
+  getLogbook:     () => ipcRenderer.invoke('flight:logbook'),
   createBooking:  (routeId) => ipcRenderer.invoke('flight:booking', routeId),
   cancelBooking:  () => ipcRenderer.invoke('flight:cancelBooking'),
   openSimBrief:   (params) => ipcRenderer.invoke('shell:simbrief', params),
-  startFlight:  (data) => ipcRenderer.invoke('flight:start', data),
+  startFlight:      (data) => ipcRenderer.invoke('flight:start', data),
+  manualStartFlight: ()   => ipcRenderer.invoke('flight:manualStart'),
+  manualStopFlight:  ()   => ipcRenderer.invoke('flight:manualStop'),
 
   // PIREP
   submitPirep: (data) => ipcRenderer.invoke('pirep:submit', data),
+
+  // Logbook
+  logbookAppend: (entry) => ipcRenderer.invoke('logbook:append', entry),
+  logbookRead:   ()      => ipcRenderer.invoke('logbook:read'),
 
   // Fenêtre frameless
   minimize: () => ipcRenderer.send('window:minimize'),
@@ -44,6 +52,7 @@ contextBridge.exposeInMainWorld('bzh', {
       'sim:aircraft',
       'sim:flight-start',
       'sim:flight-end',
+      'sim:touchdown',
       'api:status'
     ]
     if (allowed.includes(channel)) {

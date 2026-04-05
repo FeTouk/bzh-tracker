@@ -31,7 +31,7 @@ class SimConnectBridge {
     this.lastPosition = null
     this.lastVs = 0
     this.touchdownVs = 0
-    this.landingCandidate = false
+    this._touchdownCaptured = false
     this.fuelAtTakeoff = null
     // Pause tracking
     this.isPaused = false
@@ -200,27 +200,22 @@ class SimConnectBridge {
       this._windSamples.push({ dir: windDir, speed: windSpeed })
     }
 
-    if (this.isOnGround && !data.onGround && data.ias > 40) {
-      // Décollage détecté
-      this.landingCandidate = false
-      this._onTakeoff(data)
-    } else if (!this.isOnGround && data.onGround && this.flightStarted) {
-      // Roues au sol — début du candidat atterrissage
-      this.landingCandidate = true
-      this.touchdownVs = Math.abs(data.vs)  // taux de descente positif (convention FSACARS)
+    // Capture VS au touchdown (transition air→sol) — le vol démarre/s'arrête manuellement
+    if (!this.isOnGround && data.onGround && this.flightStarted) {
+      this._touchdownCaptured = true
+      this.touchdownVs = Math.max(Math.abs(this.lastVs), Math.abs(data.vs))
       this.touchdownSnapshot = {
         flaps: data.flaps, ias: data.ias, weight: data.totalWeightKg,
         headwind: data.headwind, crosswind: data.crosswind
       }
-      console.log('[SimConnect] Roues au sol, attente immobilisation...')
-    } else if (this.landingCandidate && !data.onGround) {
-      // Remise des gaz détectée
-      this.landingCandidate = false
+      console.log('[SimConnect] Touchdown, VS:', this.touchdownVs, 'fpm (lastVs:', this.lastVs, ', onGroundVs:', data.vs, ')')
+      this.mainWindow.webContents.send('sim:touchdown', { fpm: this.touchdownVs })
+    } else if (this.flightStarted && this.isOnGround && !data.onGround) {
+      // Remise des gaz après touchdown
+      this._touchdownCaptured = false
+      this.touchdownVs = 0
+      this.touchdownSnapshot = null
       console.log('[SimConnect] Remise des gaz détectée, vol continue')
-    } else if (this.landingCandidate && data.onGround && data.gs < 10) {
-      // Avion immobilisé → atterrissage confirmé
-      this.landingCandidate = false
-      this._onLanding(data)
     }
 
     this.isOnGround = data.onGround
@@ -275,6 +270,9 @@ class SimConnectBridge {
     this.totalSpeedViolationSeconds = 0
     this._lastDataTime = Date.now()
     this._landingCompleted = false
+    this._touchdownCaptured = false
+    this.touchdownVs = 0
+    this.touchdownSnapshot = null
     this._windSamples = []
     // Taxi fuel
     const taxiFuelGal = this.fuelAtGroundStart !== null ? Math.max(0, this.fuelAtGroundStart - data.fuel) : null
@@ -349,6 +347,24 @@ class SimConnectBridge {
       avgWindDir, avgWindSpeed,
       fsVersion: 'MSFS',
     })
+  }
+
+  manualStart () {
+    if (!this.currentData) return { error: 'Pas de données simulateur disponibles' }
+    if (this.flightStarted) return { error: 'Vol déjà en cours' }
+    this._onTakeoff(this.currentData)
+    return { success: true }
+  }
+
+  manualStop () {
+    if (!this.flightStarted) return { error: 'Aucun vol en cours' }
+    const data = this.currentData || {}
+    // Si pas encore de touchdown capturé (arrêt manuel en vol), utiliser le VS courant
+    if (!this._touchdownCaptured) {
+      this.touchdownVs = Math.abs(data.vs || this.lastVs || 0)
+    }
+    this._onLanding(data)
+    return { success: true }
   }
 
   _onDisconnect () {

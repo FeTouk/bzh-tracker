@@ -92,6 +92,16 @@ class ApiClient {
     return res.data
   }
 
+  async getLines () {
+    const res = await this.http.get('/tracker/lines')
+    return res.data
+  }
+
+  async getLogbook () {
+    const res = await this.http.get('/tracker/logbook')
+    return res.data
+  }
+
   async createBooking (routeId) {
     const res = await this.http.post('/tracker/booking', { route_id: routeId })
     return res.data

@@ -1,8 +1,9 @@
 require('dotenv').config()
 
-const fs = require('fs')
-const os = require('os')
-const _logFile = require('path').join(os.homedir(), 'bzh-tracker-debug.log')
+const fs   = require('fs')
+const os   = require('os')
+const path = require('path')
+const _logFile = path.join(os.homedir(), 'bzh-tracker-debug.log')
 function _log (msg) {
   const line = `[${new Date().toISOString()}] ${msg}\n`
   try { fs.appendFileSync(_logFile, line) } catch (_) {}
@@ -27,7 +28,6 @@ process.on('uncaughtException', (err) => {
 })
 
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell } = require('electron')
-const path = require('path')
 _log('electron chargé')
 const Store = require('electron-store')
 _log('electron-store chargé')
@@ -261,6 +261,16 @@ ipcMain.handle('flight:preflight', async () => {
   catch (_) { return null }
 })
 
+ipcMain.handle('flight:lines', async () => {
+  try { return await apiClient.getLines() }
+  catch (_) { return null }
+})
+
+ipcMain.handle('flight:logbook', async () => {
+  try { return await apiClient.getLogbook() }
+  catch (_) { return null }
+})
+
 ipcMain.handle('flight:booking', async (_, routeId) => {
   try {
     const result = await apiClient.createBooking(routeId)
@@ -298,6 +308,16 @@ ipcMain.handle('flight:start', async (_, data) => {
   await apiClient.startFlight(data)
 })
 
+ipcMain.handle('flight:manualStart', () => {
+  if (!simBridge) return { error: 'Simulateur non connecté' }
+  return simBridge.manualStart()
+})
+
+ipcMain.handle('flight:manualStop', () => {
+  if (!simBridge) return { error: 'Simulateur non connecté' }
+  return simBridge.manualStop()
+})
+
 // ─── IPC : PIREP ─────────────────────────────────────────────────────────────
 ipcMain.handle('pirep:submit', async (_, pirepData) => {
   try {
@@ -306,6 +326,48 @@ ipcMain.handle('pirep:submit', async (_, pirepData) => {
   } catch (err) {
     return { success: false, error: err.message }
   }
+})
+
+// ─── IPC : Logbook (CSV local) ───────────────────────────────────────────────
+const CSV_HEADER = 'date,flight_number,dep_icao,arr_icao,aircraft,duration_min,distance_nm,landing_fpm,fuel_gal,remarks\n'
+
+function getLogbookPath () {
+  return path.join(app.getPath('userData'), 'logbook.csv')
+}
+
+function escapeCsv (val) {
+  if (val === null || val === undefined) return ''
+  const s = String(val)
+  return s.includes(',') || s.includes('"') || s.includes('\n')
+    ? `"${s.replace(/"/g, '""')}"`
+    : s
+}
+
+ipcMain.handle('logbook:append', (_, entry) => {
+  const file = getLogbookPath()
+  if (!fs.existsSync(file)) fs.writeFileSync(file, CSV_HEADER, 'utf8')
+  const row = [
+    entry.date, entry.flightNumber, entry.depIcao, entry.arrIcao,
+    entry.aircraft, entry.durationMin, entry.distanceNm,
+    entry.landingFpm, entry.fuelGal, entry.remarks
+  ].map(escapeCsv).join(',') + '\n'
+  fs.appendFileSync(file, row, 'utf8')
+  return { success: true }
+})
+
+ipcMain.handle('logbook:read', () => {
+  const file = getLogbookPath()
+  if (!fs.existsSync(file)) return { entries: [] }
+  const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean)
+  // Skip header
+  const entries = lines.slice(1).reverse().map(line => {
+    const [date, flightNumber, depIcao, arrIcao, aircraft, durationMin,
+           distanceNm, landingFpm, fuelGal, ...remarkParts] = line.split(',')
+    return { date, flightNumber, depIcao, arrIcao, aircraft,
+             durationMin, distanceNm, landingFpm, fuelGal,
+             remarks: remarkParts.join(',').replace(/^"|"$/g, '') }
+  })
+  return { entries }
 })
 
 // ─── IPC : Simulateur type ───────────────────────────────────────────────────
