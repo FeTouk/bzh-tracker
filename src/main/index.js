@@ -412,17 +412,8 @@ async function tryConnectSim (simType) {
       return false
     }
     // Callback détection avion : match API puis envoi au renderer
-    simBridge.onAircraft = async (rawIcao) => {
-      try {
-        const result = await apiClient.detectAircraft(rawIcao)
-        mainWindow.webContents.send('sim:aircraft', {
-          raw:     rawIcao,
-          matched: result?.icao_code || null,
-          name:    result?.name || null,
-        })
-      } catch (_) {
-        mainWindow.webContents.send('sim:aircraft', { raw: rawIcao, matched: null, name: null })
-      }
+    simBridge.onAircraft = (name) => {
+      mainWindow.webContents.send('sim:aircraft', { name })
     }
 
     await simBridge.connect()

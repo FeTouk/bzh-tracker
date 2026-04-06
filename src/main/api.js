@@ -166,6 +166,24 @@ class ApiClient {
     }
   }
 
+  async sendLanding (data) {
+    if (!this.currentFlightId) return
+    try {
+      await this.http.post('/tracker/landing', {
+        flight_hash:      this.currentFlightId,
+        landing_rate:     -Math.abs(data.fpm),
+        airspeed:         data.ias         ?? null,
+        bank:             data.bank        ?? null,
+        pitch:            data.pitch       ?? null,
+        alt_above_ground: data.altAgl      ?? null,
+        landed_at:        new Date().toISOString(),
+      })
+      console.log('[API] Landing data envoyé:', -Math.abs(data.fpm), 'fpm')
+    } catch (err) {
+      console.warn('[API] sendLanding error:', err.message)
+    }
+  }
+
   endFlight (data) {
     // Stocke les données techniques pour submitPirep
     this.pendingFlightData = {
@@ -203,6 +221,7 @@ class ApiClient {
     if (!this.pendingFlightData) throw new Error('Aucun vol en attente')
     const res = await this.http.post('/tracker/session/end', {
       ...this.pendingFlightData,
+      aircraft:  pirepData.aircraft    || null,
       comments:  pirepData.remarks     || null,
       // Confirmation AD réels GPS (écrasent les valeurs prévues du startSession)
       orig_icao: pirepData.origIcao    || null,

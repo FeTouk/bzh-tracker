@@ -9,7 +9,6 @@ const XPLANE_HOST  = '127.0.0.1'
 const XPLANE_PORT  = 49000   // port où X-Plane écoute
 const LISTEN_PORT  = 49001   // port où on reçoit les réponses
 const RREF_HZ      = 4       // fréquence de mise à jour en Hz
-const API_SEND_INTERVAL_MS = 5000
 
 // Datarefs à lire — chaque ID est arbitraire mais unique
 const DATAREFS = [
@@ -33,6 +32,7 @@ const DATAREFS = [
   { id: 16, key: 'empty_kg',   path: 'sim/aircraft/weight/acf_m_empty'                          }, // kg vide
   { id: 17, key: 'wind_dir',   path: 'sim/cockpit2/gauges/indicators/wind_heading_deg_mag'      }, // degrés
   { id: 18, key: 'wind_speed', path: 'sim/cockpit2/gauges/indicators/wind_speed_kts'            }, // kts
+  { id: 19, key: 'alt_agl_m', path: 'sim/flightmodel/position/y_agl'                           }, // m AGL
 ]
 
 const ID_TO_KEY = {}
@@ -77,6 +77,7 @@ class XPlaneBridge {
     this.touchdownSnapshot    = null
     this._windSamples         = []
     this._initialDataReceived = false
+    this._lastPosrepTime      = null
   }
 
   async connect () {
@@ -105,12 +106,16 @@ class XPlaneBridge {
           if (this.socket) this._subscribeAll()
         }, 30000)
 
-        // Envoi position API
+        // Envoi position API (5s sous FL100, 20s au-dessus)
         this._sendTimer = setInterval(() => {
-          if (this.currentData && this.flightStarted) {
+          if (!this.currentData || !this.flightStarted) return
+          const interval = this.currentData.altitude < 10000 ? 5000 : 20000
+          const now = Date.now()
+          if (!this._lastPosrepTime || now - this._lastPosrepTime >= interval) {
+            this._lastPosrepTime = now
             this.apiClient.sendPosition(this.currentData)
           }
-        }, API_SEND_INTERVAL_MS)
+        }, 5000)
 
         this._sendStatus('connected')
         // Détection de l'avion via X-Plane 12 REST API (silencieux si XP11)
@@ -124,7 +129,7 @@ class XPlaneBridge {
     const options = {
       hostname: '127.0.0.1',
       port: 8086,
-      path: '/api/v2/datarefs?filter%5Bname%5D=sim%2Faircraft%2Fview%2Facf_ICAO',
+      path: '/api/v2/datarefs?filter%5Bname%5D=sim%2Faircraft%2Fview%2Facf_ui_name',
       method: 'GET',
       timeout: 2000,
     }
@@ -136,10 +141,10 @@ class XPlaneBridge {
           const json = JSON.parse(raw)
           // Format X-Plane 12: { data: [{ name, value }] }
           const entry = json.data?.[0]
-          const icao  = (entry?.value || '').replace(/\0/g, '').trim().toUpperCase()
-          if (icao) {
-            console.log('[X-Plane] Avion détecté:', icao)
-            if (this.onAircraft) this.onAircraft(icao)
+          const name  = (entry?.value || '').replace(/\0/g, '').trim()
+          if (name) {
+            console.log('[X-Plane] Avion détecté:', name)
+            if (this.onAircraft) this.onAircraft(name)
           }
         } catch (_) {}
       })
@@ -237,6 +242,7 @@ class XPlaneBridge {
       bank:      parseFloat((v.bank  || 0).toFixed(1)),
       fuel, fuelKg: Math.round(fuelKg),
       onGround:  (v.onground || 0) > 0.5,
+      altAgl:    parseFloat(((v.alt_agl_m || 0) * 3.28084).toFixed(1)), // m → ft
       timestamp: Date.now(),
       // FSACARS extended
       flaps, totalWeightKg, zfw, payload, windDir, windSpeed, headwind, crosswind
@@ -271,10 +277,15 @@ class XPlaneBridge {
       this.touchdownVs = Math.max(Math.abs(this.lastVs), Math.abs(data.vs))
       this.touchdownSnapshot = {
         flaps: data.flaps, ias: data.ias, weight: data.totalWeightKg,
-        headwind: data.headwind, crosswind: data.crosswind
+        headwind: data.headwind, crosswind: data.crosswind,
+        bank: data.bank, pitch: data.pitch, altAgl: data.altAgl
       }
       console.log('[X-Plane] Touchdown, VS:', this.touchdownVs, 'fpm (lastVs:', this.lastVs, ', onGroundVs:', data.vs, ')')
       this.mainWindow.webContents.send('sim:touchdown', { fpm: this.touchdownVs })
+      this.apiClient.sendLanding({
+        fpm: this.touchdownVs, ias: data.ias,
+        bank: data.bank, pitch: data.pitch, altAgl: data.altAgl
+      })
     } else if (this.flightStarted && this.isOnGround && !data.onGround) {
       // Remise des gaz après touchdown
       this._touchdownCaptured = false

@@ -52,6 +52,7 @@ class SimConnectBridge {
     this.touchdownSnapshot    = null
     this._windSamples         = []
     this._initialDataReceived = false  // évite un faux décollage si connexion en vol
+    this._lastPosrepTime      = null
   }
 
   async connect () {
@@ -87,9 +88,10 @@ class SimConnectBridge {
     handle.addToDataDefinition(DEF_ID, 'EMPTY WEIGHT',                   'Pounds',          SimConnectDataType.FLOAT64)
     handle.addToDataDefinition(DEF_ID, 'AMBIENT WIND DIRECTION',         'Degrees',         SimConnectDataType.FLOAT64)
     handle.addToDataDefinition(DEF_ID, 'AMBIENT WIND VELOCITY',          'Knots',           SimConnectDataType.FLOAT64)
+    handle.addToDataDefinition(DEF_ID, 'PLANE ALT ABOVE GROUND',         'Feet',            SimConnectDataType.FLOAT64)
 
-    // Détection de l'avion (ATC TYPE = code ICAO, ex: "B738")
-    handle.addToDataDefinition(DEF_ID_AIRCRAFT, 'ATC TYPE', null, SimConnectDataType.STRING32)
+    // Détection de l'avion via TITLE (nom complet depuis aircraft.cfg)
+    handle.addToDataDefinition(DEF_ID_AIRCRAFT, 'TITLE', null, SimConnectDataType.STRING256)
     handle.requestDataOnSimObjectType(REQ_ID_AIRCRAFT, DEF_ID_AIRCRAFT, 0, SimObjectType.USER)
 
     // Polling toutes les 5 secondes
@@ -111,7 +113,7 @@ class SimConnectBridge {
           // readString32() calls skip(32) which throws when newOffset === limit (ByteBuffer quirk).
           // readCString(offset) reads the null-terminated string at an absolute position
           // without advancing the cursor, so it never hits the boundary.
-          const type = recv.data.buffer.readCString(recv.data.getOffset()).string.trim().toUpperCase()
+          const type = recv.data.buffer.readCString(recv.data.getOffset()).string.trim()
           if (type) {
             console.log('[SimConnect] Avion détecté:', type)
             if (this.onAircraft) this.onAircraft(type)
@@ -152,6 +154,7 @@ class SimConnectBridge {
     const emptyWtLbs    = d.readFloat64()
     const windDir       = Math.round(d.readFloat64())
     const windSpeed     = Math.round(d.readFloat64())
+    const altAgl        = parseFloat(d.readFloat64().toFixed(1))
     // Derived weights (lbs → kg, Jet-A ≈ 3.04 kg/gal)
     const totalWeightKg = Math.round(totalWtLbs * 0.453592)
     const emptyWeightKg = Math.round(emptyWtLbs * 0.453592)
@@ -165,7 +168,7 @@ class SimConnectBridge {
 
     const data = {
       latitude, longitude, altitude, ias, tas, vs, heading, onGround,
-      fuel, gs, bank, pitch, timestamp: Date.now(),
+      fuel, gs, bank, pitch, altAgl, timestamp: Date.now(),
       flaps, totalWeightKg, zfw, payload, windDir, windSpeed, headwind, crosswind
     }
 
@@ -206,10 +209,15 @@ class SimConnectBridge {
       this.touchdownVs = Math.max(Math.abs(this.lastVs), Math.abs(data.vs))
       this.touchdownSnapshot = {
         flaps: data.flaps, ias: data.ias, weight: data.totalWeightKg,
-        headwind: data.headwind, crosswind: data.crosswind
+        headwind: data.headwind, crosswind: data.crosswind,
+        bank: data.bank, pitch: data.pitch, altAgl: data.altAgl
       }
       console.log('[SimConnect] Touchdown, VS:', this.touchdownVs, 'fpm (lastVs:', this.lastVs, ', onGroundVs:', data.vs, ')')
       this.mainWindow.webContents.send('sim:touchdown', { fpm: this.touchdownVs })
+      this.apiClient.sendLanding({
+        fpm: this.touchdownVs, ias: data.ias,
+        bank: data.bank, pitch: data.pitch, altAgl: data.altAgl
+      })
     } else if (this.flightStarted && this.isOnGround && !data.onGround) {
       // Remise des gaz après touchdown
       this._touchdownCaptured = false
@@ -238,7 +246,12 @@ class SimConnectBridge {
         )
       }
       this.lastPosition = data
-      this.apiClient.sendPosition(data)
+
+      const posrepInterval = data.altitude < 10000 ? 5000 : 20000
+      if (!this._lastPosrepTime || now - this._lastPosrepTime >= posrepInterval) {
+        this._lastPosrepTime = now
+        this.apiClient.sendPosition(data)
+      }
     }
   }
 

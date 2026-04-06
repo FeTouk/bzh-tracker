@@ -12,7 +12,8 @@ const state = {
   pirepDuration: 0,
   pirepFuelStart: null,
   detectedDepIcao: null,
-  detectedDestIcao: null
+  detectedDestIcao: null,
+  detectedAircraft: null
 }
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────
@@ -447,25 +448,16 @@ window.bzh.on('sim:data', (data) => {
 
 // ─── Détection avion ─────────────────────────────────────────────────────
 window.bzh.on('sim:aircraft', (data) => {
-  const icao = data.matched || data.raw
-  if (!icao) return
+  const name = data.name
+  if (!name) return
 
-  // Remplir le champ avion vol libre s'il est vide
+  state.detectedAircraft = name
+
   const libreField = $('pf-aircraft-libre')
-  if (libreField && !libreField.value) {
-    libreField.value = icao
-  }
+  if (libreField && !libreField.value) libreField.value = name
 
-  // Remplir le champ PIREP si vide
   const pirepField = $('pirep-aircraft')
-  if (pirepField && !pirepField.value) {
-    pirepField.value = icao
-  }
-
-  // Afficher une info si pas trouvé dans la base
-  if (data.raw && !data.matched) {
-    console.warn('[Tracker] Avion non reconnu dans la base :', data.raw)
-  }
+  if (pirepField && !pirepField.value) pirepField.value = name
 })
 
 // ─── Boutons start/stop manuel ───────────────────────────────────────────
@@ -501,10 +493,34 @@ $('btn-flight-stop').addEventListener('click', async () => {
 })
 
 // Notification touchdown pendant le vol (retour visuel)
+function landingQuality (fpm) {
+  const v = Math.abs(fpm)
+  if (v <= 100) return { label: 'Parfaite',   emoji: '🟢', color: '#22c55e' }
+  if (v <= 200) return { label: 'Bonne',       emoji: '🟡', color: '#eab308' }
+  if (v <= 300) return { label: 'Acceptable',  emoji: '🟠', color: '#f97316' }
+  if (v <= 500) return { label: 'Difficile',   emoji: '🔴', color: '#ef4444' }
+  return               { label: 'Crash !',     emoji: '💀', color: '#dc2626' }
+}
+
+let _touchdownToastTimer = null
+
 window.bzh.on('sim:touchdown', (data) => {
-  if (state.flightActive) {
-    $('flight-phase').textContent = `Touchdown ${data.fpm} fpm`
-  }
+  if (!state.flightActive) return
+  const q = landingQuality(data.fpm)
+  $('flight-phase').textContent = `Touchdown ${data.fpm} fpm`
+
+  // Toast
+  const toast = $('touchdown-toast')
+  $('touchdown-fpm-val').textContent = `${data.fpm} fpm`
+  $('touchdown-quality-val').textContent = `${q.emoji} ${q.label}`
+  $('touchdown-quality-val').style.color = q.color
+  toast.classList.remove('hidden')
+
+  if (_touchdownToastTimer) clearTimeout(_touchdownToastTimer)
+  _touchdownToastTimer = setTimeout(() => {
+    toast.classList.add('hidden')
+    _touchdownToastTimer = null
+  }, 5000)
 })
 
 // ─── Événements de vol ────────────────────────────────────────────────────
@@ -524,7 +540,7 @@ window.bzh.on('sim:flight-start', (data) => {
   window.bzh.startFlight({
     origIcao:     data.depIcao    || 'ZZZZ',
     destIcao:     pf.intendedDest || 'ZZZZ',
-    aircraft:     pf.aircraft     || 'Unknown',
+    aircraft:     state.detectedAircraft || pf.aircraft || 'Unknown',
     flightNumber: pf.flightNumber || null,
     lat:          data.lat,
     lng:          data.lng,
@@ -536,6 +552,7 @@ window.bzh.on('sim:flight-end', (data) => {
   state.flightActive    = false
   stopTimer()
   updateFlightButtons()
+  $('touchdown-toast').classList.add('hidden')
   state.pirepDuration = data.duration
 
   const pf = getPreflightData()
@@ -544,7 +561,7 @@ window.bzh.on('sim:flight-end', (data) => {
 
   $('pirep-dep').value      = state.detectedDepIcao  || ''
   $('pirep-arr').value      = state.detectedDestIcao || ''
-  $('pirep-aircraft').value = pf.aircraft || ''
+  $('pirep-aircraft').value = state.detectedAircraft || pf.aircraft || ''
   $('pirep-duration').value = data.duration
   $('pirep-distance').value = data.distance   ?? ''
   $('pirep-fuel').value     = data.fuelUsed   ?? ''

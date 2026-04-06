@@ -1,27 +1,43 @@
 const fs   = require('fs')
 const path = require('path')
 
-// Chargement du CSV au démarrage (31K aéroports, ~1 MB)
-const CSV_PATH = path.join(__dirname, '../../assets/airports.csv')
+// Chargement du CSV au démarrage — fr-airports.csv (OurAirports France)
+// Colonnes : id, ident, type, name, latitude_deg, longitude_deg, ...
+const CSV_PATH = path.join(__dirname, '../../assets/fr-airports.csv')
 
 let airports = []
 
+// Découpe une ligne CSV en tenant compte des champs entre guillemets
+function splitCsvLine (line) {
+  const fields = []
+  let cur = '', inQuote = false
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i]
+    if (c === '"') { inQuote = !inQuote }
+    else if (c === ',' && !inQuote) { fields.push(cur); cur = '' }
+    else { cur += c }
+  }
+  fields.push(cur)
+  return fields
+}
+
 function loadAirports () {
   try {
-    const raw  = fs.readFileSync(CSV_PATH, 'utf8').replace(/^\uFEFF/, '') // strip BOM
+    const raw   = fs.readFileSync(CSV_PATH, 'utf8').replace(/^\uFEFF/, '') // strip BOM
     const lines = raw.split('\n')
     // Skip header
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i].trim()
       if (!line) continue
-      const [ident, lat, lon] = line.split(',')
-      const la = parseFloat(lat)
-      const lo = parseFloat(lon)
+      const fields = splitCsvLine(line)
+      const ident  = fields[1] && fields[1].trim()
+      const la     = parseFloat(fields[4])
+      const lo     = parseFloat(fields[5])
       if (ident && !isNaN(la) && !isNaN(lo)) {
         airports.push({ icao: ident, lat: la, lon: lo })
       }
     }
-    console.log(`[Airports] ${airports.length} aérodromes chargés`)
+    console.log(`[Airports] ${airports.length} aérodromes chargés (fr-airports.csv)`)
   } catch (e) {
     console.error('[Airports] Erreur chargement CSV:', e.message)
   }
