@@ -1,6 +1,6 @@
 {
   "name": "bzh-tracker",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "BreizhAir Flight Tracker — Client ACARS maison",
   "main": "src/main/index.js",
   "author": "BreizhAir",
