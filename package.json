@@ -17,6 +17,7 @@
     "axios": "^1.7.2",
     "dotenv": "^16.4.5",
     "electron-store": "^8.2.0",
+    "electron-updater": "^6.8.3",
     "node-simconnect": "^4.1.0-beta.2",
     "socket.io-client": "^4.7.5"
   },
@@ -32,7 +33,9 @@
     "protocols": [
       {
         "name": "BZH Tracker",
-        "schemes": ["bzh-tracker"]
+        "schemes": [
+          "bzh-tracker"
+        ]
       }
     ],
     "win": {
@@ -48,6 +51,11 @@
     ],
     "asarUnpack": [
       "node_modules/node-simconnect/**/*"
-    ]
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "FeTouk",
+      "repo": "bzh-tracker"
+    }
   }
 }

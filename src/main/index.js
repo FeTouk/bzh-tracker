@@ -28,6 +28,7 @@ process.on('uncaughtException', (err) => {
 })
 
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell } = require('electron')
+const { autoUpdater } = require('electron-updater')
 _log('electron chargé')
 const Store = require('electron-store')
 _log('electron-store chargé')
@@ -167,8 +168,11 @@ app.whenReady().then(() => {
   // Auto-login si credentials sauvegardés
   const savedEmail    = store.get('auth.email')
   const savedPassword = store.get('auth.password')
-  if (savedEmail && savedPassword) {
-    mainWindow.webContents.once('did-finish-load', async () => {
+  mainWindow.webContents.once('did-finish-load', async () => {
+    // Vérification des mises à jour (silencieux en dev)
+    if (!process.defaultApp) autoUpdater.checkForUpdates().catch(() => {})
+
+    if (savedEmail && savedPassword) {
       try {
         const result = await apiClient.login(savedEmail, savedPassword)
         store.set('auth.token', result.token)
@@ -179,11 +183,34 @@ app.whenReady().then(() => {
       } catch (_) {
         // Credentials expirés ou invalides, on reste sur l'écran de login
       }
-    })
-  }
+    }
+  })
 })
 
 app.on('window-all-closed', (e) => e.preventDefault())
+
+// ─── Auto-updater ─────────────────────────────────────────────────────────────
+autoUpdater.autoDownload = true
+autoUpdater.autoInstallOnAppQuit = true
+autoUpdater.logger = null // pas de logs verbose
+
+autoUpdater.on('update-available', (info) => {
+  _log(`[Updater] Nouvelle version disponible : ${info.version}`)
+  if (mainWindow) mainWindow.webContents.send('update:available', { version: info.version })
+})
+
+autoUpdater.on('update-downloaded', (info) => {
+  _log(`[Updater] Version ${info.version} téléchargée`)
+  if (mainWindow) mainWindow.webContents.send('update:ready', { version: info.version })
+})
+
+autoUpdater.on('error', (err) => {
+  _log(`[Updater] Erreur : ${err.message}`)
+})
+
+ipcMain.handle('update:install', () => {
+  autoUpdater.quitAndInstall()
+})
 
 // ─── IPC : Authentification ───────────────────────────────────────────────────
 ipcMain.handle('auth:login', async (_, { email, password, remember }) => {

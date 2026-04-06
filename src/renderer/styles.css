@@ -349,6 +349,20 @@ input[readonly]:focus { border-color: var(--border); box-shadow: none; }
 .phase-value { color: var(--text); font-weight: 600; }
 
 /* ── Touchdown toast ─────────────────────────────────────────────────────── */
+.update-banner {
+  background: var(--accent); color: #fff;
+  font-size: 12px; font-weight: 600;
+  padding: 6px 12px; text-align: center;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+}
+.update-banner.hidden { display: none; }
+.update-banner button {
+  background: rgba(255,255,255,0.25); border: none; border-radius: 4px;
+  color: #fff; font-size: 11px; font-weight: 700;
+  padding: 2px 8px; cursor: pointer;
+}
+.update-banner button:hover { background: rgba(255,255,255,0.4); }
+
 .touchdown-toast {
   position: fixed; bottom: 72px; left: 50%; transform: translateX(-50%);
   background: var(--bg-card); border: 1px solid var(--border);

@@ -504,6 +504,20 @@ function landingQuality (fpm) {
 
 let _touchdownToastTimer = null
 
+// ─── Mises à jour ─────────────────────────────────────────────────────────────
+const updateBanner = $('update-banner')
+
+window.bzh.on('update:available', (data) => {
+  updateBanner.innerHTML = `Mise à jour v${data.version} en téléchargement…`
+  updateBanner.classList.remove('hidden')
+})
+
+window.bzh.on('update:ready', (data) => {
+  updateBanner.innerHTML = `v${data.version} prête — <button id="btn-update">Redémarrer</button>`
+  updateBanner.classList.remove('hidden')
+  $('btn-update').addEventListener('click', () => window.bzh.installUpdate())
+})
+
 window.bzh.on('sim:touchdown', (data) => {
   if (!state.flightActive) return
   const q = landingQuality(data.fpm)

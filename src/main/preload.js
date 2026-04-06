@@ -31,6 +31,9 @@ contextBridge.exposeInMainWorld('bzh', {
   // PIREP
   submitPirep: (data) => ipcRenderer.invoke('pirep:submit', data),
 
+  // Mise à jour
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+
   // Logbook
   logbookAppend: (entry) => ipcRenderer.invoke('logbook:append', entry),
   logbookRead:   ()      => ipcRenderer.invoke('logbook:read'),
@@ -53,7 +56,9 @@ contextBridge.exposeInMainWorld('bzh', {
       'sim:flight-start',
       'sim:flight-end',
       'sim:touchdown',
-      'api:status'
+      'api:status',
+      'update:available',
+      'update:ready'
     ]
     if (allowed.includes(channel)) {
       ipcRenderer.on(channel, (_, data) => callback(data))
