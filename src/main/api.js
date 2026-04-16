@@ -35,14 +35,21 @@ class ApiClient {
         const status = err.response?.status
         const msg    = err.response?.data?.message || err.message
 
-        if (status === 401) {
-          // Session expirée — notifier le renderer pour retourner au login
-          this._sendApiStatus('error', 'Session expirée')
+        // Requêtes silencieuses (ex: getLines) : pas de statut global
+        if (!err.config?._silent) {
+          if (status === 401) {
+            this._sendApiStatus('error', 'Session expirée')
+            if (this.mainWindow) {
+              this.mainWindow.webContents.send('auth:session-expired')
+            }
+          } else {
+            this._sendApiStatus('error', msg)
+          }
+        } else if (status === 401) {
+          // Même en mode silencieux, une 401 déconnecte
           if (this.mainWindow) {
             this.mainWindow.webContents.send('auth:session-expired')
           }
-        } else {
-          this._sendApiStatus('error', msg)
         }
 
         return Promise.reject(new Error(msg))
@@ -93,8 +100,13 @@ class ApiClient {
   }
 
   async getLines () {
-    const res = await this.http.get('/tracker/lines')
-    return res.data
+    try {
+      const res = await this.http.get('/tracker/lines', { _silent: true })
+      return res.data
+    } catch (err) {
+      console.warn('[API] getLines échoué:', err.message)
+      return null
+    }
   }
 
   async getLogbook () {
@@ -225,7 +237,7 @@ class ApiClient {
       comments:  pirepData.remarks     || null,
       // Confirmation AD réels GPS (écrasent les valeurs prévues du startSession)
       orig_icao: pirepData.origIcao    || null,
-      dest_icao: pirepData.arrIcaoGps  || null,
+      dest_icao: pirepData.arrIcaoGps  || pirepData.arrIcao || null,
     })
     this.currentFlightId = null
     this.pendingFlightData = null

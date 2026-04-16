@@ -227,9 +227,12 @@ function loadPreflight () {
   loadDispatch()
 }
 
-async function loadDispatch () {
+async function loadDispatch (attempt = 1) {
   const data = await window.bzh.getLines()
-  if (!data) return
+  if (!data) {
+    if (attempt < 4) setTimeout(() => loadDispatch(attempt + 1), attempt * 2000)
+    return
+  }
 
   allRoutes     = data.routes || []
   activeBooking = data.active_booking || null
@@ -571,7 +574,7 @@ window.bzh.on('sim:flight-end', (data) => {
 
   const pf = getPreflightData()
   // Destination : GPS si trouvé, sinon destination prévue de la ligne (fallback)
-  state.detectedDestIcao = data.arrIcao || pf.intendedDest || null
+  state.detectedDestIcao = data.arrIcao || null
 
   $('pirep-dep').value      = state.detectedDepIcao  || ''
   $('pirep-arr').value      = state.detectedDestIcao || ''
