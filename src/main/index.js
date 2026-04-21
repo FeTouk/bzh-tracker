@@ -317,7 +317,7 @@ ipcMain.handle('flight:cancelBooking', async () => {
 })
 
 ipcMain.handle('auth:openWebAuth', () => {
-  const baseUrl = process.env.BZH_WEB_URL || 'https://test.breizhair.fr'
+  const baseUrl = process.env.BZH_WEB_URL || 'https://breizhair.fr'
   shell.openExternal(baseUrl + '/tracker/auth')
 })
 

@@ -3,8 +3,8 @@ const crypto = require('crypto')
 const { io } = require('socket.io-client')
 
 // À configurer selon l'URL de breizhairV2
-const API_BASE = process.env.BZH_API_URL || 'https://test.breizhair.fr/api'
-const WS_URL   = process.env.BZH_WS_URL  || 'https://test.breizhair.fr'
+const API_BASE = process.env.BZH_API_URL || 'https://breizhair.fr/api'
+const WS_URL   = process.env.BZH_WS_URL  || 'https://breizhair.fr'
 
 class ApiClient {
   constructor (store, mainWindow) {
