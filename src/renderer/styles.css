@@ -56,9 +56,24 @@ html, body {
   -webkit-app-region: drag;
   flex-shrink: 0;
 }
-.titlebar-logo { display: flex; align-items: center; gap: 8px; }
+.titlebar-logo { display: flex; align-items: center; gap: 6px; }
 .logo-text { font-size: 13px; font-weight: 700; letter-spacing: 2px; color: var(--text-muted); }
 .logo-accent { color: var(--accent); }
+.app-version {
+  font-size: 9px; font-weight: 600; letter-spacing: 0.5px;
+  color: var(--text-muted); opacity: 0.55;
+  -webkit-app-region: no-drag;
+}
+.tb-btn-update {
+  font-size: 10px; font-weight: 700;
+  padding: 2px 7px; height: 18px;
+  border: none; border-radius: 4px;
+  background: var(--accent); color: #fff;
+  cursor: pointer; -webkit-app-region: no-drag;
+  transition: opacity 0.15s;
+}
+.tb-btn-update:hover { opacity: 0.8; }
+.tb-btn-update.hidden { display: none; }
 .titlebar-controls { display: flex; gap: 4px; -webkit-app-region: no-drag; }
 .tb-btn {
   width: 28px; height: 22px;

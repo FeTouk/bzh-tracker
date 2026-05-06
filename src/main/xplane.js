@@ -77,6 +77,7 @@ class XPlaneBridge {
     this.touchdownSnapshot    = null
     this._windSamples         = []
     this._initialDataReceived = false
+    this._iasAutoStartArmed   = true   // armé tant que l'IAS reste < 5 kts avant décollage
     this._lastPosrepTime      = null
   }
 
@@ -250,6 +251,12 @@ class XPlaneBridge {
   }
 
   _processGroundState (data) {
+    // Auto-start : déclenche le vol dès que l'IAS franchit 5 kts (refuel déjà effectué)
+    if (!this.flightStarted) {
+      if (data.ias < 5) this._iasAutoStartArmed = true
+      else if (this._iasAutoStartArmed) { this._iasAutoStartArmed = false; this._onTakeoff(data) }
+    }
+
     // Taxi & fuel tracking
     if (data.onGround) {
       if (this.fuelAtGroundStart === null && !this.flightStarted) {
@@ -340,6 +347,7 @@ class XPlaneBridge {
 
   _onTakeoff (data) {
     this.flightStarted = true
+    this._iasAutoStartArmed = false
     this.flightStartTime = Date.now()
     this.totalDistanceNm = 0
     this.lastPosition = data

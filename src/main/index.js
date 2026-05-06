@@ -403,6 +403,7 @@ ipcMain.handle('sim:getType', () => store.get('sim.type', 'msfs'))
 // ─── IPC : Thème ─────────────────────────────────────────────────────────────
 ipcMain.handle('theme:get', () => store.get('theme', 'dark'))
 ipcMain.handle('theme:set', (_, theme) => { store.set('theme', theme) })
+ipcMain.handle('app:version', () => app.getVersion())
 
 // ─── IPC : Fenêtre (frameless) ────────────────────────────────────────────────
 ipcMain.on('window:minimize', () => mainWindow.minimize())

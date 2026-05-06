@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('bzh', {
 
   // Mise à jour
   installUpdate: () => ipcRenderer.invoke('update:install'),
+  getVersion:    () => ipcRenderer.invoke('app:version'),
 
   // Logbook
   logbookAppend: (entry) => ipcRenderer.invoke('logbook:append', entry),

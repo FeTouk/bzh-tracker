@@ -52,6 +52,7 @@ class SimConnectBridge {
     this.touchdownSnapshot    = null
     this._windSamples         = []
     this._initialDataReceived = false  // évite un faux décollage si connexion en vol
+    this._iasAutoStartArmed   = true   // armé tant que l'IAS reste < 5 kts avant décollage
     this._lastPosrepTime      = null
   }
 
@@ -99,11 +100,13 @@ class SimConnectBridge {
       handle.requestDataOnSimObjectType(REQ_ID, DEF_ID, 0, SimObjectType.USER)
     }, SEND_INTERVAL_MS)
 
-    // Abonnement à l'événement de pause
-    handle.subscribeToSystemEvent(EVT_PAUSE, 'Pause')
+    // Abonnement à l'événement de pause (Pause_EX1 pour ignorer la perte de focus)
+    handle.subscribeToSystemEvent(EVT_PAUSE, 'Pause_EX1')
     handle.on('event', (recv) => {
       if (recv.clientEventId === EVT_PAUSE) {
-        this._onPauseChange(recv.data === 1)
+        // bits 0-2 (1|2|4) = pause utilisateur — bit 3 (8) = perte de focus/système, ignoré
+        const isRealPause = (recv.data & 0b0111) !== 0
+        this._onPauseChange(isRealPause)
       }
     })
 
@@ -180,6 +183,12 @@ class SimConnectBridge {
       this._initialDataReceived = true
       this.isOnGround = onGround
       return
+    }
+
+    // Auto-start : déclenche le vol dès que l'IAS franchit 5 kts (refuel déjà effectué)
+    if (!this.flightStarted) {
+      if (data.ias < 5) this._iasAutoStartArmed = true
+      else if (this._iasAutoStartArmed) { this._iasAutoStartArmed = false; this._onTakeoff(data) }
     }
 
     // Taxi & fuel tracking (pre-flight)
@@ -274,6 +283,7 @@ class SimConnectBridge {
 
   _onTakeoff (data) {
     this.flightStarted = true
+    this._iasAutoStartArmed = false
     this.flightStartTime = Date.now()
     this.flightLog = []
     this.totalDistanceNm = 0
