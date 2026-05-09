@@ -78,10 +78,9 @@ function createWindow () {
 
 // ─── Tray icon ───────────────────────────────────────────────────────────────
 function createTray () {
-  const trayIconPath = path.join(__dirname, '../../assets/icons/win/icon.ico')
-  const fallbackPath = path.join(__dirname, '../../assets/icon.png')
-  const fs = require('fs')
-  const iconPath = fs.existsSync(trayIconPath) ? trayIconPath : fallbackPath
+  const iconPath = process.platform === 'win32'
+    ? path.join(__dirname, '../../assets/icons/win/icon.ico')
+    : path.join(__dirname, '../../assets/icons/png/256x256.png')
   const icon = nativeImage.createFromPath(iconPath)
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon)
 
@@ -140,11 +139,22 @@ async function _handleTrackerAuthToken (token) {
   }
 }
 
-// Second instance = deep link sur Windows
+// Second instance = deep link (Windows/Linux)
 app.on('second-instance', (_, commandLine) => {
   const url = commandLine.map(a => a.replace(/"/g, '')).find(arg => arg.startsWith('bzh-tracker://'))
   if (url) handleDeepLink(url)
   if (mainWindow) { mainWindow.show(); mainWindow.focus() }
+})
+
+// macOS : deep link via open-url, clic dock via activate
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  handleDeepLink(url)
+  if (mainWindow) { mainWindow.show(); mainWindow.focus() }
+})
+
+app.on('activate', () => {
+  if (mainWindow) mainWindow.show()
 })
 
 // ─── Initialisation ──────────────────────────────────────────────────────────
