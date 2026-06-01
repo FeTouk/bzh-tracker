@@ -213,6 +213,22 @@
           </div>
         </div>
 
+        <!-- Vol libre -->
+        <div class="card" id="card-vol-libre">
+          <div class="card-header">
+            <span class="card-title">VOL LIBRE</span>
+          </div>
+          <div class="field">
+            <label>Aéronef <span class="field-opt">auto-détecté</span></label>
+            <input type="text" id="pf-aircraft-libre" placeholder="Ex : Airbus A320-214" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label>Destination ICAO <span class="field-opt">optionnel</span></label>
+            <input type="text" id="pf-dest-libre" maxlength="4" placeholder="LFRS" autocomplete="off" />
+          </div>
+          <p class="vol-libre-hint">Vol en dehors des lignes programmées. L'aéronef est pré-rempli par le simulateur.</p>
+        </div>
+
         <!-- Champs cachés pour compatibilité getPreflightData() -->
         <input type="hidden" id="pf-orig-display" />
         <input type="hidden" id="pf-route-select" />

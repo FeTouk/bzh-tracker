@@ -52,7 +52,7 @@ class SimConnectBridge {
     this.touchdownSnapshot    = null
     this._windSamples         = []
     this._initialDataReceived = false  // évite un faux décollage si connexion en vol
-    this._iasAutoStartArmed   = true   // armé tant que l'IAS reste < 5 kts avant décollage
+    this._iasAutoStartArmed   = false  // armé quand GS atteint 0, déclenché quand GS ≥ 5
     this._lastPosrepTime      = null
   }
 
@@ -185,10 +185,10 @@ class SimConnectBridge {
       return
     }
 
-    // Auto-start : déclenche le vol dès que l'IAS franchit 5 kts (refuel déjà effectué)
+    // Auto-start : s'arme quand GS = 0 (arrêt complet, vent neutre), se déclenche quand GS ≥ 5 kts
     if (!this.flightStarted) {
-      if (data.ias < 5) this._iasAutoStartArmed = true
-      else if (this._iasAutoStartArmed) { this._iasAutoStartArmed = false; this._onTakeoff(data) }
+      if (data.gs === 0) this._iasAutoStartArmed = true
+      else if (this._iasAutoStartArmed && data.gs >= 5) { this._iasAutoStartArmed = false; this._onTakeoff(data) }
     }
 
     // Taxi & fuel tracking (pre-flight)
@@ -326,6 +326,7 @@ class SimConnectBridge {
 
   _onLanding (data) {
     this.flightStarted = false
+    this._iasAutoStartArmed = false  // désarmé jusqu'à arrêt complet (GS = 0)
     this._landingCompleted = true
     this.maxTaxiSpeedDest = 0
     const duration              = Math.round((Date.now() - this.flightStartTime) / 1000 / 60)

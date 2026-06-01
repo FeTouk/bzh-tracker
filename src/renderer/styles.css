@@ -293,6 +293,8 @@ input[readonly]:focus { border-color: var(--border); box-shadow: none; }
 .dispatch-aircraft { font-size: 11px; color: var(--text); font-weight: 600; }
 .dispatch-type { font-size: 10px; color: var(--text-muted); text-transform: uppercase; }
 .dispatch-book-btn { font-size: 11px; padding: 3px 10px; white-space: nowrap; }
+.field-opt { font-size: 10px; color: var(--text-muted); font-weight: 400; margin-left: 4px; }
+.vol-libre-hint { font-size: 11px; color: var(--text-muted); margin-top: 6px; line-height: 1.4; }
 
 /* ── Pilot header ────────────────────────────────────────────────────────── */
 .pilot-info { display: flex; align-items: center; gap: 10px; }

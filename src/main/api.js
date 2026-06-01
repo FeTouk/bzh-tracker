@@ -156,6 +156,7 @@ class ApiClient {
       console.log('[API] Vol démarré:', this.currentFlightId)
     } catch (err) {
       console.error('[API] startFlight error:', err.message)
+      this._sendApiStatus('error', 'Échec création session vol : ' + err.message)
     }
   }
 
@@ -231,6 +232,10 @@ class ApiClient {
 
   async submitPirep (pirepData) {
     if (!this.pendingFlightData) throw new Error('Aucun vol en attente')
+    const flightHash = this.pendingFlightData.flight_hash
+    if (!flightHash) {
+      throw new Error('Session de vol non enregistrée côté serveur — vérifiez la connexion API et réessayez')
+    }
     const res = await this.http.post('/tracker/session/end', {
       ...this.pendingFlightData,
       aircraft:  pirepData.aircraft    || null,
@@ -239,7 +244,9 @@ class ApiClient {
       orig_icao: pirepData.origIcao    || null,
       dest_icao: pirepData.arrIcaoGps  || pirepData.arrIcao || null,
     })
-    this.currentFlightId = null
+    // Ne réinitialiser currentFlightId que s'il correspond au vol terminé —
+    // évite d'effacer le hash d'un vol suivant déjà en cours
+    if (this.currentFlightId === flightHash) this.currentFlightId = null
     this.pendingFlightData = null
     return res.data
   }

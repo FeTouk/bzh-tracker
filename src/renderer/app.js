@@ -325,6 +325,10 @@ function renderRoutesList (filter) {
 
 $('dispatch-filter').addEventListener('input', () => renderRoutesList($('dispatch-filter').value))
 
+$('pf-dest-libre').addEventListener('input', (e) => {
+  e.target.value = e.target.value.toUpperCase()
+})
+
 document.querySelectorAll('.dispatch-tab').forEach(tab => {
   tab.addEventListener('click', () => {
     activeTypeFilter = tab.dataset.type
@@ -366,10 +370,18 @@ $('btn-simbrief').addEventListener('click', () => {
 
 function getPreflightData () {
   const route = allRoutes.find(r => r.id == $('pf-route-select').value)
+  if (route) {
+    return {
+      intendedDest: route.arrival_icao,
+      aircraft:     route.aircraft_type,
+      flightNumber: $('pf-flight-number').value.trim()
+    }
+  }
+  // Vol libre — pas de réservation active
   return {
-    intendedDest: route ? route.arrival_icao : '',
-    aircraft:     route ? route.aircraft_type : '',
-    flightNumber: $('pf-flight-number').value.trim()
+    intendedDest: ($('pf-dest-libre').value || '').trim().toUpperCase(),
+    aircraft:     ($('pf-aircraft-libre').value || '').trim(),
+    flightNumber: null
   }
 }
 
@@ -488,10 +500,15 @@ $('btn-flight-stop').addEventListener('click', async () => {
   if (!confirm('Terminer le vol et générer le PIREP ?')) return
   const btn = $('btn-flight-stop')
   btn.disabled = true
-  const res = await window.bzh.manualStopFlight()
-  if (res && res.error) {
+  try {
+    const res = await window.bzh.manualStopFlight()
+    if (res && res.error) {
+      btn.disabled = false
+      alert(res.error)
+    }
+  } catch (err) {
     btn.disabled = false
-    alert(res.error)
+    alert('Erreur lors de l\'arrêt du vol : ' + (err.message || err))
   }
 })
 
