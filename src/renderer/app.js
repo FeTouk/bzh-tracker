@@ -595,7 +595,7 @@ window.bzh.on('sim:flight-end', (data) => {
   state.detectedDestIcao = data.arrIcao || null
 
   $('pirep-dep').value      = state.detectedDepIcao  || ''
-  $('pirep-arr').value      = state.detectedDestIcao || ''
+  $('pirep-arr').value      = state.detectedDestIcao || pf.intendedDest || ''
   $('pirep-aircraft').value = state.detectedAircraft || pf.aircraft || ''
   $('pirep-duration').value = data.duration
   $('pirep-distance').value = data.distance   ?? ''

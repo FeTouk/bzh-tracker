@@ -1,6 +1,6 @@
 {
   "name": "bzh-tracker",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "BreizhAir Flight Tracker — Client ACARS",
   "main": "src/main/index.js",
   "author": "Aurélien POULICHET",

@@ -1,9 +1,9 @@
 const fs   = require('fs')
 const path = require('path')
 
-// Chargement du CSV au démarrage — fr-airports.csv (OurAirports France)
-// Colonnes : id, ident, type, name, latitude_deg, longitude_deg, ...
-const CSV_PATH = path.join(__dirname, '../../assets/fr-airports.csv')
+// Chargement du CSV au démarrage — airports.csv (OurAirports monde entier)
+// Colonnes : ident, latitude_deg, longitude_deg, term
+const CSV_PATH = path.join(__dirname, '../../assets/airports.csv')
 
 let airports = []
 
@@ -30,14 +30,14 @@ function loadAirports () {
       const line = lines[i].trim()
       if (!line) continue
       const fields = splitCsvLine(line)
-      const ident  = fields[1] && fields[1].trim()
-      const la     = parseFloat(fields[4])
-      const lo     = parseFloat(fields[5])
+      const ident  = fields[0] && fields[0].trim()
+      const la     = parseFloat(fields[1])
+      const lo     = parseFloat(fields[2])
       if (ident && !isNaN(la) && !isNaN(lo)) {
         airports.push({ icao: ident, lat: la, lon: lo })
       }
     }
-    console.log(`[Airports] ${airports.length} aérodromes chargés (fr-airports.csv)`)
+    console.log(`[Airports] ${airports.length} aérodromes chargés (airports.csv — monde entier)`)
   } catch (e) {
     console.error('[Airports] Erreur chargement CSV:', e.message)
   }
