@@ -23,37 +23,44 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run build:win -- --publish always
 
-  build-mac:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build & publish
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_IDENTITY_AUTO_DISCOVERY: false
-        run: npm run build:mac -- --publish always
-
-  build-linux:
+  notify:
     runs-on: ubuntu-latest
+    needs: [build-windows]
+    if: always()
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          fetch-depth: 0
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build & publish
+      - name: Send Discord notification
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run build:linux -- --publish always
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          WIN="${{ needs.build-windows.result }}"
+          TAG="${{ github.ref_name }}"
+          REPO="${{ github.repository }}"
+
+          PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${TAG}$" | head -1)
+          if [ -n "$PREV_TAG" ]; then
+            CHANGELOG=$(git log "${PREV_TAG}..${TAG}" --pretty=format:"• %s" --no-merges)
+          else
+            CHANGELOG=$(git log "${TAG}" --pretty=format:"• %s" --no-merges | head -10)
+          fi
+
+          if [ "$WIN" = "success" ]; then
+            COLOR=3066993
+            TITLE="✅ BZH Tracker ${TAG} — Build réussi"
+          else
+            COLOR=15158332
+            TITLE="❌ BZH Tracker ${TAG} — Build échoué"
+          fi
+
+          DESC="**Changements**\n${CHANGELOG}"
+
+          PAYLOAD=$(jq -n \
+            --arg title "$TITLE" \
+            --arg desc "$DESC" \
+            --argjson color "$COLOR" \
+            '{embeds: [{title: $title, description: $desc, color: $color}]}')
+
+          curl -s -X POST -H "Content-Type: application/json" -d "$PAYLOAD" "$DISCORD_WEBHOOK"
