@@ -481,6 +481,7 @@ function updateFlightButtons () {
   const canStop  = state.simConnected &&  state.flightActive
   $('btn-flight-start').disabled = !canStart
   $('btn-flight-start').classList.toggle('hidden', state.flightActive)
+  $('btn-flight-stop').disabled = !canStop
   $('btn-flight-stop').classList.toggle('hidden', !state.flightActive)
 }
 
@@ -702,6 +703,7 @@ $('form-pirep').addEventListener('submit', async (e) => {
     })
     loadLogbook()
     resetPirepForm()
+    resetTrackerForNextFlight()
     $('pirep-badge').classList.add('hidden')
     $('nav-pirep-badge').classList.add('hidden')
     $('pirep-waiting').classList.remove('hidden')
@@ -730,6 +732,23 @@ function resetPirepForm () {
   $('pirep-remarks').value = ''
   state.pirepRating = 5
   document.querySelectorAll('#pirep-rating span').forEach((s) => s.classList.add('active'))
+}
+
+// Remet le tracker à zéro pour un prochain vol (utile en vols consécutifs)
+function resetTrackerForNextFlight () {
+  state.flightStartTime = null
+  state.pirepDuration   = 0
+  state.pirepFuelStart  = null
+  state.detectedDepIcao  = null
+  state.detectedDestIcao = null
+  state.detectedAircraft = null
+
+  $('pf-orig-display').value   = ''
+  $('pf-dest-libre').value     = ''
+  $('pf-aircraft-libre').value = ''
+
+  updateFlightButtons()
+  loadDispatch()
 }
 
 // ─── Logbook ──────────────────────────────────────────────────────────────
