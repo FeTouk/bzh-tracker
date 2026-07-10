@@ -219,6 +219,7 @@ autoUpdater.on('error', (err) => {
 })
 
 ipcMain.handle('update:install', () => {
+  app.isQuitting = true
   autoUpdater.quitAndInstall()
 })
 

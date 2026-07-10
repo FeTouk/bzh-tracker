@@ -393,7 +393,7 @@ class XPlaneBridge {
     const duration              = Math.round((Date.now() - this.flightStartTime) / 60000)
     const distance              = Math.round(this.totalDistanceNm)
     const landingFpm            = this.touchdownVs
-    const fuelUsed              = this.fuelAtTakeoff !== null ? Math.round(this.fuelAtTakeoff - data.fuel) : null
+    const fuelUsed              = this.fuelAtTakeoff !== null ? Math.max(0, Math.round(this.fuelAtTakeoff - data.fuel)) : null
     const pauseSeconds          = Math.round(this.totalPauseSeconds)
     const speedViolationSeconds = Math.round(this.totalSpeedViolationSeconds)
 
